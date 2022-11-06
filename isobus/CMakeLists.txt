@@ -35,7 +35,8 @@ set(ISOBUS_SRC
     "isobus_language_command_interface.cpp"
     "isobus_task_controller_client_objects.cpp"
     "isobus_task_controller_client.cpp"
-    "isobus_device_descriptor_object_pool.cpp")
+    "isobus_device_descriptor_object_pool.cpp"
+    "isobus_file_server_client.cpp")
 
 # Prepend the source directory path to all the source files
 prepend(ISOBUS_SRC ${ISOBUS_SRC_DIR} ${ISOBUS_SRC})
@@ -71,7 +72,8 @@ set(ISOBUS_INCLUDE
     "isobus_standard_data_description_indices.hpp"
     "isobus_task_controller_client_objects.hpp"
     "isobus_task_controller_client.hpp"
-    "isobus_device_descriptor_object_pool.hpp")
+    "isobus_device_descriptor_object_pool.hpp"
+    "isobus_file_server_client.hpp")
 
 # Prepend the include directory path to all the include files
 prepend(ISOBUS_INCLUDE ${ISOBUS_INCLUDE_DIR} ${ISOBUS_INCLUDE})
