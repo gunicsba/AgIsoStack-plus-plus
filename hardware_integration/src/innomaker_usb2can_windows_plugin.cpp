@@ -71,9 +71,9 @@ void InnomakerUSB2CANWindowsPlugin::open()
 
 	// Their documentation is quite bad, but it seems to be
 	// a 24 MHz clock, so this would be 250K baud if that is correct.
-	bitTiming.prop_seg = 1;
+	bitTiming.prop_seg = 6;
 	bitTiming.phase_seg1 = 7;
-	bitTiming.phase_seg2 = 8;
+	bitTiming.phase_seg2 = 2;
 	bitTiming.sjw = 1;
 	bitTiming.brp = 12;
 	driverInstance->urbSetupDevice(device, usbCanMode, bitTiming);
