@@ -61,11 +61,6 @@ TEST(FILE_SERVER_CLIENT_TESTS, StateMachineTests)
 
 	CANHardwareInterface::set_number_of_can_channels(1);
 	CANHardwareInterface::assign_can_channel_frame_handler(0, std::make_shared<VirtualCANPlugin>());
-	CANHardwareInterface::add_can_lib_update_callback(
-	  [](void *) {
-		  CANNetworkManager::CANNetwork.update();
-	  },
-	  nullptr);
 	CANHardwareInterface::start();
 
 	NAME clientNAME(0);
@@ -105,7 +100,7 @@ TEST(FILE_SERVER_CLIENT_TESTS, StateMachineTests)
 	testFrame.data[5] = 0x52;
 	testFrame.data[6] = 0x00;
 	testFrame.data[7] = 0xA0;
-	CANNetworkManager::CANNetwork.can_lib_process_rx_message(testFrame, nullptr);
+	CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
 
 	DerivedTestFileServerClient interfaceUnderTest(tcPartner, internalECU);
 
@@ -120,11 +115,6 @@ TEST(FILE_SERVER_CLIENT_TESTS, MessageEncoding)
 
 	CANHardwareInterface::set_number_of_can_channels(1);
 	CANHardwareInterface::assign_can_channel_frame_handler(0, std::make_shared<VirtualCANPlugin>());
-	CANHardwareInterface::add_can_lib_update_callback(
-	  [](void *) {
-		  CANNetworkManager::CANNetwork.update();
-	  },
-	  nullptr);
 	CANHardwareInterface::start();
 
 	NAME clientNAME(0);
@@ -163,7 +153,7 @@ TEST(FILE_SERVER_CLIENT_TESTS, MessageEncoding)
 	testFrame.data[5] = 0x52;
 	testFrame.data[6] = 0x00;
 	testFrame.data[7] = 0xA0;
-	CANNetworkManager::CANNetwork.can_lib_process_rx_message(testFrame, nullptr);
+	CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
 
 	DerivedTestFileServerClient interfaceUnderTest(fileServerPartner, internalECU);
 

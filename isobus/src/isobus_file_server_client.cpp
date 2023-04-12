@@ -17,7 +17,7 @@
 
 namespace isobus
 {
-	const std::map<FileServerClient::ErrorCode, std::string> FileServerClient::ERROR_TO_STRING_MAP = {
+	const std::map<FileServerClient::ErrorCode, const std::string> FileServerClient::ERROR_TO_STRING_MAP = {
 		{ ErrorCode::Success, "Success" },
 		{ ErrorCode::AccessDenied, "Access Denied" },
 		{ ErrorCode::InvalidAccess, "Invalid Access" },
@@ -35,7 +35,17 @@ namespace isobus
 		{ ErrorCode::InvalidRequestLength, "Invalid Request Length" },
 		{ ErrorCode::OutOfMemory, "Out of Memory" },
 		{ ErrorCode::AnyOtherError, "Any Other Error" },
-		{ ErrorCode::FilePointerAtEndOfFile, "File Pointer at End of File" }
+		{ ErrorCode::FilePointerAtEndOfFile, "File Pointer at End of File" },
+		{ ErrorCode::TANError, "TAN Error" },
+		{ ErrorCode::MalformedRequest, "Malformed Request" }
+	};
+
+	const std::map<FileServerClient::VolumeStatus, const std::string> FileServerClient::VOLUME_STATUS_TO_STRING_MAP = {
+		{ VolumeStatus::InUse, "In Use" },
+		{ VolumeStatus::PreparingForRemoval, "Preparing For Removal" },
+		{ VolumeStatus::Present, "Present" },
+		{ VolumeStatus::Removed, "Removed" },
+		{ VolumeStatus::Reserved, "Reserved" }
 	};
 
 	FileServerClient::FileServerClient(std::shared_ptr<PartneredControlFunction> partner, std::shared_ptr<InternalControlFunction> clientSource) :
@@ -58,7 +68,7 @@ namespace isobus
 	{
 		bool retVal = false;
 
-		const std::unique_lock<std::mutex> lock(metadataMutex);
+		const std::lock_guard<std::mutex> lock(metadataMutex);
 
 		/// @todo Change directory
 
@@ -68,6 +78,8 @@ namespace isobus
 	bool FileServerClient::get_file_attribute(std::uint8_t handle, FileHandleAttributesBit attributeToGet)
 	{
 		bool retVal = false;
+
+		const std::lock_guard<std::mutex> lock(metadataMutex);
 
 		for (auto &file : fileInfoList)
 		{
@@ -95,7 +107,7 @@ namespace isobus
 	{
 		std::uint8_t retVal = INVALID_FILE_HANDLE;
 
-		const std::unique_lock<std::mutex> lock(metadataMutex);
+		const std::lock_guard<std::mutex> lock(metadataMutex);
 
 		for (auto &file : fileInfoList)
 		{
@@ -112,7 +124,7 @@ namespace isobus
 	{
 		FileState retVal = FileState::Uninitialized;
 
-		const std::unique_lock<std::mutex> lock(metadataMutex);
+		const std::lock_guard<std::mutex> lock(metadataMutex);
 
 		for (auto &file : fileInfoList)
 		{
@@ -129,7 +141,7 @@ namespace isobus
 	{
 		bool fileAlreadyInList = false;
 
-		const std::unique_lock<std::mutex> lock(metadataMutex);
+		const std::lock_guard<std::mutex> lock(metadataMutex);
 
 		for (auto &file : fileInfoList)
 		{
@@ -177,6 +189,22 @@ namespace isobus
 			}
 		}
 		return retVal;
+	}
+
+	bool FileServerClient::copy_file(std::string sourcePath, std::string destinationPath, bool force, bool recursive)
+	{
+		std::uint8_t fileHandlingOptions = ((0x01 << static_cast<std::uint8_t>(FileHandlingModeBit::Copy)) |
+		                                    (static_cast<std::uint8_t>(force) << static_cast<std::uint8_t>(FileHandlingModeBit::Force)) |
+		                                    (static_cast<std::uint8_t>(recursive) << static_cast<std::uint8_t>(FileHandlingModeBit::Recursive)));
+		return send_move_file(sourcePath, destinationPath, fileHandlingOptions);
+	}
+
+	bool FileServerClient::move_file(std::string sourcePath, std::string destinationPath, bool force, bool recursive)
+	{
+		std::uint8_t fileHandlingOptions = ((0x00 << static_cast<std::uint8_t>(FileHandlingModeBit::Copy)) |
+		                                    (static_cast<std::uint8_t>(force) << static_cast<std::uint8_t>(FileHandlingModeBit::Force)) |
+		                                    (static_cast<std::uint8_t>(recursive) << static_cast<std::uint8_t>(FileHandlingModeBit::Recursive)));
+		return send_move_file(sourcePath, destinationPath, fileHandlingOptions);
 	}
 
 	bool FileServerClient::write_file(std::uint8_t handle, const std::uint8_t *data, std::uint8_t dataSize)
@@ -422,7 +450,7 @@ namespace isobus
 		fileInfoList.clear();
 	}
 
-	std::string FileServerClient::error_code_to_string(ErrorCode errorCode) const
+	const std::string FileServerClient::error_code_to_string(ErrorCode errorCode) const
 	{
 		std::string retVal = "Undefined Error"; // Perhaps the file server version is newer than we support?
 
@@ -430,6 +458,18 @@ namespace isobus
 		if (ERROR_TO_STRING_MAP.end() != errorText)
 		{
 			retVal = errorText->second;
+		}
+		return retVal;
+	}
+
+	const std::string FileServerClient::volume_status_to_string(VolumeStatus status) const
+	{
+		std::string retVal = "Undefined";
+
+		auto statusText = VOLUME_STATUS_TO_STRING_MAP.find(status);
+		if (VOLUME_STATUS_TO_STRING_MAP.end() != statusText)
+		{
+			retVal = statusText->second;
 		}
 		return retVal;
 	}
@@ -619,7 +659,7 @@ namespace isobus
 					{
 						bool foundMatchingFileInList = false;
 
-						std::unique_lock<std::mutex> lock(metadataMutex);
+						const std::lock_guard<std::mutex> lock(metadataMutex);
 
 						for (auto file = fileInfoList.begin(); file != fileInfoList.end(); file++)
 						{
@@ -659,7 +699,7 @@ namespace isobus
 					{
 						bool foundMatchingFileInList = false;
 
-						std::unique_lock<std::mutex> lock(metadataMutex);
+						const std::lock_guard<std::mutex> lock(metadataMutex);
 
 						for (auto &file : fileInfoList)
 						{
@@ -702,19 +742,264 @@ namespace isobus
 
 				case static_cast<std::uint8_t>(FileServerToClientMultiplexor::VolumeStatusResponse):
 				{
+					if ((CAN_DATA_LENGTH <= message->get_data_length()) &&
+					    ((0 != messageData[4]) ||
+					     (0 != messageData[5])))
+					{
+						std::uint16_t pathNameLength = message->get_uint16_at(4);
+
+						if (pathNameLength == (message->get_data_length() - 6))
+						{
+							std::string receivedVolumeName;
+
+							for (std::uint16_t i = 0; i < pathNameLength; i++)
+							{
+								receivedVolumeName.push_back(messageData.at(6 + i));
+							}
+
+							const std::lock_guard<std::mutex> lock(metadataMutex);
+							bool matchedExistingVolume = false;
+							for (auto volume = volumeStatusList.begin(); volume != volumeStatusList.end(); volume++)
+							{
+								if (volume->volumeName == receivedVolumeName)
+								{
+									CANStackLogger::debug("Volume " + receivedVolumeName + " status: " + volume_status_to_string(static_cast<VolumeStatus>(messageData[1])));
+									matchedExistingVolume = true;
+
+									if (VolumeStatus::Removed == static_cast<VolumeStatus>(messageData[1]))
+									{
+										volumeStatusList.erase(volume);
+									}
+									break;
+								}
+							}
+
+							if (!matchedExistingVolume)
+							{
+								CANStackLogger::info("[FS]: New volume discovered: " + receivedVolumeName + " status: " + volume_status_to_string(static_cast<VolumeStatus>(messageData[1])));
+								volumeStatusList.push_back({ receivedVolumeName, static_cast<VolumeStatus>(messageData[1]), messageData[2], static_cast<ErrorCode>(messageData[3]) });
+
+								if ((ErrorCode::Success != static_cast<ErrorCode>(messageData[3])) && (nullptr != message->get_destination_control_function()))
+								{
+									CANStackLogger::warn("[FS]: File server sent a non-zero status for volume " + receivedVolumeName + " to global, which is not allowed!");
+								}
+							}
+						}
+						else
+						{
+							CANStackLogger::warn("[FS]: Received a malformed volume status message. Path length is invalid.");
+						}
+					}
+					else
+					{
+						CANStackLogger::warn("[FS]: Received a malformed volume status message.");
+					}
 				}
 				break;
 
 				case static_cast<std::uint8_t>(FileServerToClientMultiplexor::GetCurrentDirectoryResponse):
+				{
+					constexpr std::size_t MIN_GET_CURRENT_DIRECTORY_RESPONSE_LENGTH = 14;
+
+					if (MIN_GET_CURRENT_DIRECTORY_RESPONSE_LENGTH <= message->get_data_length())
+					{
+						if (ErrorCode::Success == static_cast<ErrorCode>(messageData[2]))
+						{
+							std::uint16_t pathNameLength = message->get_uint16_at(11);
+							if (0 != pathNameLength)
+							{
+								const std::lock_guard<std::mutex> lock(metadataMutex);
+
+								currentDirectory.clear();
+								for (std::uint16_t i = 0; i < pathNameLength; i++)
+								{
+									currentDirectory.push_back(messageData.at(13 + i));
+								}
+
+								std::uint32_t totalSpace = message->get_uint32_at(3);
+								std::uint32_t freeSpace = message->get_uint32_at(7);
+								CANStackLogger::info("[FS]: Current directory is: " + currentDirectory);
+								CANStackLogger::debug("[FS]: Current directory has " + isobus::to_string(512 * totalSpace) + " bytes of total space ");
+								CANStackLogger::debug("[FS]: Current directory has " + isobus::to_string(512 * freeSpace) + " bytes of free space ");
+							}
+							else
+							{
+								CANStackLogger::warn("[FS]: Get current directory error path has zero length, which is invalid. Message will be ignored.");
+							}
+						}
+						else
+						{
+							CANStackLogger::error("[FS]: Get current directory error: " + error_code_to_string(static_cast<ErrorCode>(messageData[2])));
+						}
+					}
+					else
+					{
+						CANStackLogger::warn("[FS]: Received a malformed get current directory response. DLC is too short.");
+					}
+				}
+				break;
+
 				case static_cast<std::uint8_t>(FileServerToClientMultiplexor::SeekFileResponse):
+				{
+					if (CAN_DATA_LENGTH == message->get_data_length())
+					{
+						std::uint32_t filePointerPosition = message->get_uint32_at(4);
+						bool fileMatched = false;
+
+						const std::lock_guard<std::mutex> lock(metadataMutex);
+
+						for (auto &file : fileInfoList)
+						{
+							if (file->transactionNumberForRequest == messageData[1])
+							{
+								fileMatched = true;
+								if (FileState::WaitForSeekFileResponse == file->state)
+								{
+									if (ErrorCode::Success == static_cast<ErrorCode>(messageData[2]))
+									{
+										file->state = FileState::FileOpen;
+										CANStackLogger::debug("[FS]: File seek completed to location: " + isobus::to_string(filePointerPosition));
+									}
+									else
+									{
+										CANStackLogger::error("[FS]: Seek file error: " + error_code_to_string(static_cast<ErrorCode>(messageData[2])));
+									}
+								}
+								else
+								{
+									CANStackLogger::warn("[FS]: Received an unexpected seek file response");
+								}
+								break;
+							}
+						}
+
+						if (!fileMatched)
+						{
+							CANStackLogger::warn("[FS]: Received an unexpected seek file response");
+						}
+					}
+					else
+					{
+						CANStackLogger::warn("[FS]: Received a malformed seek file response. DLC must be 8.");
+					}
+				}
+				break;
+
 				case static_cast<std::uint8_t>(FileServerToClientMultiplexor::ReadFileResponse):
+				{
+					if (6 <= message->get_data_length())
+					{
+						std::uint16_t byteCount = message->get_uint16_at(3); // See B.20
+
+						const std::lock_guard<std::mutex> lock(metadataMutex);
+
+						for (auto &file : fileInfoList)
+						{
+							if (file->transactionNumberForRequest == messageData[1])
+							{
+								if (FileState::WaitForReadFileResponse == file->state)
+								{
+									if (ErrorCode::Success == static_cast<ErrorCode>(messageData[2]))
+									{
+										file->state = FileState::FileOpen;
+										CANStackLogger::debug("[FS]: File read completed, returned byte count: " + isobus::to_string(byteCount));
+										//! @todo Call read callback
+									}
+									else
+									{
+										CANStackLogger::error("[FS]: Read file error: " + error_code_to_string(static_cast<ErrorCode>(messageData[2])));
+									}
+								}
+								else
+								{
+									CANStackLogger::warn("[FS]: Received an unexpected read file response");
+								}
+								break;
+							}
+						}
+					}
+					else
+					{
+						CANStackLogger::warn("[FS]: Received a malformed read file response. DLC must be at least 6.");
+					}
+				}
+				break;
+
 				case static_cast<std::uint8_t>(FileServerToClientMultiplexor::MoveFileResponse):
+				{
+					if (CAN_DATA_LENGTH <= message->get_data_length())
+					{
+						if (StateMachineState::WaitForMoveFileResponse == get_state())
+						{
+							set_state(StateMachineState::Connected);
+							CANStackLogger::debug("[FS]: File move/copy result: " + error_code_to_string(static_cast<ErrorCode>(messageData[2])));
+						}
+						else
+						{
+							CANStackLogger::warn("[FS]: Received an unexpected move file response.");
+						}
+					}
+					else
+					{
+						CANStackLogger::warn("[FS]: Received a malformed move file response. DLC must be 8.");
+					}
+				}
+				break;
+
 				case static_cast<std::uint8_t>(FileServerToClientMultiplexor::DeleteFileResponse):
+				{
+					if (CAN_DATA_LENGTH == message->get_data_length())
+					{
+						if (StateMachineState::WaitForDeleteFileResponse == get_state())
+						{
+							set_state(StateMachineState::Connected);
+							CANStackLogger::debug("[FS]: Delete file result: " + error_code_to_string(static_cast<ErrorCode>(messageData[2])));
+						}
+						else
+						{
+							CANStackLogger::warn("[FS]: Received an unexpected move file response.");
+						}
+					}
+					else
+					{
+						CANStackLogger::warn("[FS]: Received a malformed delete file response. DLC must be 8.");
+					}
+				}
+				break;
+
 				case static_cast<std::uint8_t>(FileServerToClientMultiplexor::GetFileAttributesResponse):
+				{
+				}
+				break;
+
 				case static_cast<std::uint8_t>(FileServerToClientMultiplexor::SetFileAttributesResponse):
+				{
+				}
+				break;
+
 				case static_cast<std::uint8_t>(FileServerToClientMultiplexor::GetFileDateAndTimeResponse):
+				{
+				}
+				break;
+
 				case static_cast<std::uint8_t>(FileServerToClientMultiplexor::InitializeVolumeResponse):
 				{
+					if (CAN_DATA_LENGTH == message->get_data_length())
+					{
+						if (StateMachineState::WaitForInitializeVolumeResponse == get_state())
+						{
+							set_state(StateMachineState::Connected);
+							CANStackLogger::debug("[FS]: Initialize volume result: " + error_code_to_string(static_cast<ErrorCode>(messageData[2])));
+						}
+						else
+						{
+							CANStackLogger::warn("[FS]: Received an unexpected initialize volume response.");
+						}
+					}
+					else
+					{
+						CANStackLogger::warn("[FS]: Received a malformed initialize volume response. DLC must be 8.");
+					}
 				}
 				break;
 
@@ -866,6 +1151,50 @@ namespace isobus
 		                                                      myControlFunction.get(),
 		                                                      partnerControlFunction.get(),
 		                                                      CANIdentifier::PriorityLowest7);
+	}
+
+	bool FileServerClient::send_move_file(std::string sourcePath, std::string destinationPath, std::uint8_t fileHandlingMode)
+	{
+		bool retVal = false;
+
+		if ((sourcePath.length() > 0) &&
+		    (destinationPath.length() > 0))
+		{
+			assert(sourcePath.length() < 65535); // Only 2 bytes for size!
+			assert(destinationPath.length() < 65535); // Only 2 bytes for size!
+			std::vector<std::uint8_t> buffer;
+
+			buffer.reserve(CAN_DATA_LENGTH + sourcePath.length() + destinationPath.length());
+
+			buffer.push_back(static_cast<std::uint8_t>(ClientToFileServerMultiplexor::MoveFileRequest));
+			buffer.push_back(transactionNumber);
+			transactionNumber++;
+
+			std::uint16_t sourceLength = static_cast<std::uint16_t>(sourcePath.length());
+			std::uint16_t destinationLength = static_cast<std::uint16_t>(destinationPath.length());
+			buffer.push_back(fileHandlingMode);
+			buffer.push_back(static_cast<std::uint8_t>(sourceLength & 0xFF));
+			buffer.push_back(static_cast<std::uint8_t>(sourceLength >> 8));
+			buffer.push_back(static_cast<std::uint8_t>(destinationLength & 0xFF));
+			buffer.push_back(static_cast<std::uint8_t>(destinationLength >> 8));
+
+			for (std::size_t i = 0; i < sourcePath.length(); i++)
+			{
+				buffer.push_back(sourcePath.at(i));
+			}
+			for (std::size_t i = 0; i < destinationPath.length(); i++)
+			{
+				buffer.push_back(destinationPath.at(i));
+			}
+
+			retVal = CANNetworkManager::CANNetwork.send_can_message(static_cast<std::uint32_t>(CANLibParameterGroupNumber::ClientToFileServer),
+			                                                        buffer.data(),
+			                                                        buffer.size(),
+			                                                        myControlFunction.get(),
+			                                                        partnerControlFunction.get(),
+			                                                        CANIdentifier::PriorityLowest7);
+		}
+		return retVal;
 	}
 
 	bool FileServerClient::send_open_file(std::shared_ptr<FileInfo> fileMetadata) const

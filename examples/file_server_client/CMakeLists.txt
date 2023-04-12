@@ -10,4 +10,5 @@ endif()
 find_package(Threads REQUIRED)
 
 add_executable(FileServerClientExampleTarget main.cpp console_logger.cpp)
-target_link_libraries(FileServerClientExampleTarget Isobus Threads::Threads isobus::Utility isobus::HardwareIntegration)
+target_link_libraries(FileServerClientExampleTarget Isobus Threads::Threads
+                      isobus::Utility isobus::HardwareIntegration)

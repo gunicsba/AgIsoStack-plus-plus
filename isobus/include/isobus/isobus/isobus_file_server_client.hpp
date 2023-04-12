@@ -41,7 +41,13 @@ namespace isobus
 			WaitForChangeToManufacturerDirectoryResponse, ///< Waiting for the response to the change directory request for "~\"
 			Connected, ///< FS is connected. You can use public functions on this class to interact further from this point!
 			SendChangeDirectoryRequest, ///< Changing directory
-			WaitForChangeDirectoryResponse ///< Waiting for a response to a directory change. Opening files is not allowed until this operation succeeds or fails.
+			WaitForChangeDirectoryResponse, ///< Waiting for a response to a directory change. Opening files is not allowed until this operation succeeds or fails.
+			SendMoveFile, ///< Move a file (or copy a file)
+			WaitForMoveFileResponse, ///< Waiting for a response to a move or copy operation
+			SendDeleteFile, ///< Try to delete a file on the file server
+			WaitForDeleteFileResponse, ///< Waiting for a response to a delete file request
+			SendInitializeVolume, ///< Prepare the volume to accept files and directories. All data is lost upon completion of this command.
+			WaitForInitializeVolumeResponse ///< Waiting on response to an initialize volume request
 		};
 
 		/// @brief Enumerates the state a file can be in
@@ -58,7 +64,9 @@ namespace isobus
 			SendReadFile, ///< If the read file function is called, this state sends the appropriate message
 			WaitForReadFileResponse, ///< Waiting for a response to our last read file request
 			SendCloseFile, ///< Try to close the file
-			WaitForCloseFileResponse ///< Waiting for a response to our request to close a file
+			WaitForCloseFileResponse, ///< Waiting for a response to our request to close a file
+			SendSeekFile, ///< Send message to change the file pointer location
+			WaitForSeekFileResponse ///< Waiting for a seek file response message
 		};
 
 		/// @brief Enumerates the different ways a file or directory can be opened
@@ -172,6 +180,31 @@ namespace isobus
 		/// @returns `true` if the command was accepted and the interface will send the close file message
 		bool close_file(std::uint8_t handle);
 
+		/// @brief Copies a file to a new location
+		/// @param[in] sourcePath Source Volume, Path, File and Wildcard Name
+		/// @param[in] destinationPath Destination Volume, Path, File and Wildcard Name
+		/// @param[in] force If this is set to true, a copy will be made even if the destination file
+		/// already exists.
+		/// @param[in] recursive If this is true, then a directory will be recursively copied
+		/// @attention If you try to copy a folder that contains subfolders without "recursive" it will fail.
+		/// @returns true if the request was sent, otherwise false
+		bool copy_file(std::string sourcePath, std::string destinationPath, bool force, bool recursive);
+
+		/// @brief Moves a file to a new location
+		/// @details The type of action that happens depends on the destination, similar to linux's 'mv'
+		/// If the destination filename differs from the file's present name, the file is renamed.
+		/// If the destination path differs from the source path, the file is moved.
+		/// If the destination path contains directories that do not exist, those directories are created.
+		/// If the directory or file exists in the destination path, an Error Code “Access denied” will be returned
+		/// unless the force mode is set.
+		/// @param[in] sourcePath Source Volume, Path, File and Wildcard Name
+		/// @param[in] destinationPath Destination Volume, Path, File and Wildcard Name
+		/// @param[in] force If this is set to true, the file will be moved even if a file or directory already exists at the destination.
+		/// @param[in] recursive If this is true, then a directory will be recursively moved
+		/// @attention If you try to move a folder that contains subfolders without "recursive" it will fail.
+		/// @returns true if the request was sent, otherwise false
+		bool move_file(std::string sourcePath, std::string destinationPath, bool force, bool recursive);
+
 		/// @brief Writes data to a file associated with a handle
 		/// @note File must be open to write, and your handle must be valid.
 		/// @param[in] handle The file handle associated to the file you want to write to
@@ -213,6 +246,7 @@ namespace isobus
 			FinalDraftEdition = 1, ///< Final draft edition of the International Standard
 			FirstPublishedEdition = 2, ///< First published edition of the International Standard
 			SecondPublishedEdition = 3, ///< Second published edition of the International Standard
+			ThirdPublishedEdition = 4, ///< Third published edition of the International Standard
 			CompliantWithVersion2AndPrior = 255 ///< Compliant with Version 2 and prior (client only)
 		};
 
@@ -236,7 +270,9 @@ namespace isobus
 			InvalidRequestLength = 42, ///< used when the file pointer hits the start/top of the file or on invalid space request of the volume
 			OutOfMemory = 43, ///< used by FS to indicate out of resources at this time and cannot complete request
 			AnyOtherError = 44,
-			FilePointerAtEndOfFile = 45
+			FilePointerAtEndOfFile = 45,
+			TANError = 46,
+			MalformedRequest = 47
 		};
 
 		/// @brief The position mode specifies the location from which the offset value is used to determine the file pointer position.
@@ -245,6 +281,14 @@ namespace isobus
 			FromTheBeginningOfTheFile = 0, ///< From the beginning of the file
 			FromTheCurrentPointerPosition = 1, ///< From the current pointer position
 			FromTheEndOfTheFile = 2 ///< From the end of the file
+		};
+
+		/// @brief Enumerates the different file handling mode bit indicies (B.27)
+		enum class FileHandlingModeBit : std::uint8_t
+		{
+			Copy = 0, ///< Copy instead of move
+			Force = 1, ///< Move/copy even if destination already exists (overwrite)
+			Recursive = 2 ///< Recursively move/copy a directory
 		};
 
 		/// @brief The multiplexor byte options for the file server to client PGN
@@ -322,7 +366,12 @@ namespace isobus
 		/// @brief Takes an error code and converts it to a human readable string for logging
 		/// @param[in] errorCode The error code to convert to string
 		/// @returns The human readable error code, or "Undefined" if some other value is passed in
-		std::string error_code_to_string(ErrorCode errorCode) const;
+		const std::string error_code_to_string(ErrorCode errorCode) const;
+
+		/// @brief Takes a volume status code and converts it to a human readable string for logging
+		/// @param[in] status The volume status to convert to string
+		/// @returns The human readable error code, or "Undefined" if some other value is passed in
+		const std::string volume_status_to_string(VolumeStatus status) const;
 
 		/// @brief Processes the internal Tx flags
 		/// @param[in] flag The flag to process
@@ -375,6 +424,13 @@ namespace isobus
 		/// @returns `true` if the message was sent, otherwise `false`
 		bool send_get_file_server_properties() const;
 
+		/// @brief Sends a move file request. Used as the backend of "move_file" and "copy_file"
+		/// @param[in] source The Source Volume, Path, File and Wildcard Name
+		/// @param[in] destination The Destination Volume, Path, File and Wildcard Name
+		/// @param[in] fileHandlingMode The file handling mode byte (B.27)
+		/// @returns true if the message was sent, otherwise false
+		bool send_move_file(std::string source, std::string destination, std::uint8_t fileHandlingMode);
+
 		/// @brief Sends the open file request message
 		/// @param[in] fileMetadata The file meta data structure used to send the message
 		/// @returns `true` if the message is sent, otherwise `false`
@@ -386,11 +442,12 @@ namespace isobus
 
 		/// @brief Changes the internal state machine state and updates the associated timestamp to the specified one
 		/// @note This is intended for testing purposes only
-		/// @param[in] newState The new state for the state machine
-		/// @param[in] timestamp The new value for the state machine timestamp (in milliseconds)
+		/// @param[in] state The new state for the state machine
+		/// @param[in] timestamp_ms The new value for the state machine timestamp (in milliseconds)
 		void set_state(StateMachineState state, std::uint32_t timestamp_ms);
 
 		/// @brief Sets the current state machine state and a transition timestamp
+		/// @param[in] fileMetadata The file metadata to set the state within
 		/// @param[in] state The new state
 		void set_file_state(std::shared_ptr<FileInfo> fileMetadata, FileState state);
 
@@ -408,7 +465,17 @@ namespace isobus
 		static constexpr std::uint8_t FILE_SERVER_BUSY_WRITING_BIT_MASK = 0x02; ///< A bitmask for reading the "busy writing" bit out of fileServerStatusBitfield
 		static constexpr std::uint8_t FILE_SERVER_CAPABILITIES_BIT_MASK = 0x01; ///< A bitmask for the multiple volume support bit in fileServerCapabilitiesBitfield
 		static constexpr CANIdentifier::CANPriority FILE_SERVER_MESSAGE_PRIORITY = CANIdentifier::CANPriority::PriorityLowest7; ///< All FS messages are sent with lowest priority
-		static const std::map<ErrorCode, std::string> ERROR_TO_STRING_MAP; ///< A map between error code and a string description
+		static const std::map<ErrorCode, const std::string> ERROR_TO_STRING_MAP; ///< A map between error code and a string description for logging
+		static const std::map<VolumeStatus, const std::string> VOLUME_STATUS_TO_STRING_MAP; ///< A map between volume status and a string description for logging
+
+		/// @brief Defines a set of information that the FS sends about each volume
+		struct VolumeInfo
+		{
+			std::string volumeName; ///< The name of the volume
+			VolumeStatus status = VolumeStatus::Present; ///< The volume's current state
+			std::uint8_t maximumTimeBeforeRemoval = 0; ///< The max amount of time before the volume may be removed when in the PreparingForRemoval state
+			ErrorCode lastErrorCode = ErrorCode::Success; ///< The last error code
+		};
 
 		std::shared_ptr<PartneredControlFunction> partnerControlFunction; ///< The partner control function this client will send to
 		std::shared_ptr<InternalControlFunction> myControlFunction; ///< The internal control function the client uses to send from
@@ -416,6 +483,7 @@ namespace isobus
 		std::thread *workerThread = nullptr; ///< The worker thread that updates this interface
 		std::mutex metadataMutex; ///< Protects the TAN and file metadata list
 		std::list<std::shared_ptr<FileInfo>> fileInfoList; ///< List of files the client interface knows about and is managing
+		std::list<VolumeInfo> volumeStatusList; ///< A list of volumes being reported by the server
 		ProcessingFlags txFlags; ///< A retry mechanism for internal Tx messages
 		StateMachineState currentState = StateMachineState::Disconnected; ///< The current state machine state
 		std::string currentDirectory; ///< Maintatains our current working directory location

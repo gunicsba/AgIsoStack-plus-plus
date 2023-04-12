@@ -21,16 +21,6 @@ void signal_handler(int)
 	running = false;
 }
 
-void update_CAN_network(void *)
-{
-	isobus::CANNetworkManager::CANNetwork.update();
-}
-
-void raw_can_glue(isobus::HardwareInterfaceCANFrame &rawFrame, void *parentPointer)
-{
-	isobus::CANNetworkManager::CANNetwork.can_lib_process_rx_message(rawFrame, parentPointer);
-}
-
 enum class ExampleStateMachineState
 {
 	OpenFile,
@@ -49,11 +39,11 @@ int main()
 	std::shared_ptr<isobus::InternalControlFunction> TestInternalECU = nullptr;
 	std::shared_ptr<isobus::PartneredControlFunction> TestPartnerFS = nullptr;
 	std::shared_ptr<isobus::FileServerClient> TestFileServerClient = nullptr;
-	std::shared_ptr<CANHardwarePlugin> canDriver = nullptr;
+	std::shared_ptr<isobus::CANHardwarePlugin> canDriver = nullptr;
 #if defined(ISOBUS_SOCKETCAN_AVAILABLE)
 	canDriver = std::make_shared<SocketCANInterface>("can0");
 #elif defined(ISOBUS_WINDOWSPCANBASIC_AVAILABLE)
-	canDriver = std::make_shared<PCANBasicWindowsPlugin>(PCAN_USBBUS1);
+	canDriver = std::make_shared<isobus::PCANBasicWindowsPlugin>(PCAN_USBBUS1);
 #elif defined(ISOBUS_WINDOWSINNOMAKERUSB2CAN_AVAILABLE)
 	canDriver = std::make_shared<InnoMakerUSB2CANWindowsPlugin>(0); // CAN0
 #elif defined(ISOBUS_MACCANPCAN_AVAILABLE)
@@ -67,17 +57,14 @@ int main()
 		return -1;
 	}
 
-	CANHardwareInterface::set_number_of_can_channels(1);
-	CANHardwareInterface::assign_can_channel_frame_handler(0, canDriver);
+	isobus::CANHardwareInterface::set_number_of_can_channels(1);
+	isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, canDriver);
 
-	if ((!CANHardwareInterface::start()) || (!canDriver->get_is_valid()))
+	if ((!isobus::CANHardwareInterface::start()) || (!canDriver->get_is_valid()))
 	{
 		std::cout << "Failed to start hardware interface. The CAN driver might be invalid." << std::endl;
 		return -2;
 	}
-
-	CANHardwareInterface::add_can_lib_update_callback(update_CAN_network, nullptr);
-	CANHardwareInterface::add_raw_can_message_rx_callback(raw_can_glue, nullptr);
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(250));
 
@@ -179,6 +166,6 @@ int main()
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 
-	CANHardwareInterface::stop();
+	isobus::CANHardwareInterface::stop();
 	return 0;
 }
