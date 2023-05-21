@@ -225,19 +225,19 @@ isobus::EventDispatcher<SectionControlImplementSimulator::Events> &SectionContro
 	return eventReporter;
 }
 
-void SectionControlImplementSimulator::process_application_can_messages(isobus::CANMessage *messageToProcess, void *parentPointer)
+void SectionControlImplementSimulator::process_application_can_messages(const isobus::CANMessage &messageToProcess, void *parentPointer)
 {
-	if ((nullptr != parentPointer) && (nullptr != messageToProcess))
+	if (nullptr != parentPointer)
 	{
 		auto implement = static_cast<SectionControlImplementSimulator *>(parentPointer);
-		switch (messageToProcess->get_identifier().get_parameter_group_number())
+		switch (messageToProcess.get_identifier().get_parameter_group_number())
 		{
 			case ISO_MACHINE_SELECTED_SPEED_PGN:
 			{
-				if (isobus::CAN_DATA_LENGTH == messageToProcess->get_data_length())
+				if (isobus::CAN_DATA_LENGTH == messageToProcess.get_data_length())
 				{
 					implement->machineSelectedSpeedTimestamp_ms = isobus::SystemTiming::get_timestamp_ms();
-					implement->machineSelectedSpeedRaw = messageToProcess->get_uint16_at(0);
+					implement->machineSelectedSpeedRaw = messageToProcess.get_uint16_at(0);
 				}
 			}
 			break;

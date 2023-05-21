@@ -116,6 +116,7 @@
 #define dropdown_OutRect 14008 //0x36B8
 #define hamburgerLine_OutRect 14009 //0x36B9
 #define readoutGeneric_OutRect 14010 //0x36BA
+#define buttonCover_OutRect 14011 //0x36BB
 #define currentSpeed_OutMeter 17000 //0x4268
 #define avatar_OutPict 20000 //0x4E20
 #define warningIcon_OutPict 20001 //0x4E21

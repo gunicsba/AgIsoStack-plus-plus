@@ -189,7 +189,7 @@ public:
 	/// @brief Processes some application layer CAN messages
 	/// @param[in] messageToProcess The CAN message to process
 	/// @param[in] parentPointer A pointer back to a specific instance of this class
-	static void process_application_can_messages(isobus::CANMessage *messageToProcess, void *parentPointer);
+	static void process_application_can_messages(const isobus::CANMessage &messageToProcess, void *parentPointer);
 
 	/// @brief A callback that will be used by the TC client to read values
 	/// @param[in] elementNumber The element number associated to the value being requested

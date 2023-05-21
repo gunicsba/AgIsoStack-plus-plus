@@ -71,7 +71,7 @@ bool SeederVtApplication::Initialize()
 	// Generate a unique version string for this object pool (this is optional, and is entirely application specific behavior)
 	std::string objectPoolHash = isobus::IOPFileInterface::hash_object_pool_to_version(objectPool);
 
-	VTClientInterface.set_object_pool(0, isobus::VirtualTerminalClient::VTVersion::Version4, objectPool.data(), objectPool.size(), objectPoolHash);
+	VTClientInterface.set_object_pool(0, isobus::VirtualTerminalClient::VTVersion::Version3, objectPool.data(), objectPool.size(), objectPoolHash);
 	softkeyEventListener = VTClientInterface.add_vt_soft_key_event_listener(handle_vt_key_events);
 	buttonEventListener = VTClientInterface.add_vt_button_event_listener(handle_vt_key_events);
 	numericValueEventListener = VTClientInterface.add_vt_change_numeric_value_event_listener(handle_numeric_value_events);
