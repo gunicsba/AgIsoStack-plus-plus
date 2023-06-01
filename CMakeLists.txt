@@ -121,7 +121,8 @@ if(BUILD_TESTING)
       test/event_dispatcher_tests.cpp
       test/isb_tests.cpp
       test/cf_functionalities_tests.cpp
-      test/guidance_tests.cpp)
+      test/guidance_tests.cpp
+      test/maintain_power_tests.cpp)
 
   add_executable(unit_tests ${TEST_SRC})
   target_link_libraries(
