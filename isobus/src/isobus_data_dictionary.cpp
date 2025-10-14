@@ -670,7 +670,7 @@ namespace isobus
 			case static_cast<std::uint16_t>(DataDescriptionIndex::TramlineControlLevel):
 			case static_cast<std::uint16_t>(DataDescriptionIndex::SetpointTramlineControlLevel):
 			{
-				// based on TramlineControl_BasicRequirements_v1.14-v1.pdf
+				// based on TramlineControl_BasicRequirements_v1.16_AEF_Development-v2.pdf
 				switch (value)
 				{
 					case 0x00:
