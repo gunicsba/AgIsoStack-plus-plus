@@ -133,6 +133,35 @@ namespace isobus
 		/// @returns returns true if the IOP size is known but the transfer is not finished
 		bool is_object_pool_transfer_in_progress() const;
 
+		// Retry mechanism methods for handling failed object pool transfers
+		/// @brief Tracks a failed object pool transfer for retry purposes
+		/// @param[in] size The size of the failed object pool transfer
+		void track_failed_object_pool_transfer(std::uint32_t size);
+
+		/// @brief Returns whether there was a failed object pool transfer
+		/// @returns true if there was a failed object pool transfer, otherwise false
+		bool has_failed_object_pool_transfer() const;
+
+		/// @brief Returns the size of the failed object pool transfer
+		/// @returns The size of the failed object pool transfer
+		std::uint32_t get_failed_object_pool_size() const;
+
+		/// @brief Returns the current retry count for failed object pool transfers
+		/// @returns The current retry count
+		std::uint32_t get_retry_count() const;
+
+		/// @brief Increments the retry count for failed object pool transfers
+		void increment_retry_count();
+
+		/// @brief Resets the retry count to zero
+		void reset_retry_count();
+
+		/// @brief Clears the failed object pool transfer tracking
+		void clear_failed_object_pool_transfer();
+
+		/// @brief Maximum number of retries allowed for object pool transfers
+		static constexpr std::uint32_t MAX_RETRY_COUNT = 5;
+
 	private:
 		/// @brief Sets the object pool processing state to a new value
 		/// @param[in] value The new state of processing the object pool
@@ -150,6 +179,11 @@ namespace isobus
 		std::uint16_t focusedObject = NULL_OBJECT_ID; ///< Stores the object ID of the currently focused object
 		bool wasLoadedFromNonVolatileMemory = false; ///< Used to tell the server how this object pool was obtained
 		bool workingSetDeletionRequested = false; ///< Used to tell the server to delete this working set
+		
+		// Retry mechanism variables
+		std::uint32_t failedObjectPoolSize = 0; ///< Size of the failed object pool transfer
+		std::uint32_t retryCount = 0; ///< Current retry count for failed object pool transfers
+		bool hasFailedObjectPoolTransfer = false; ///< Flag indicating if there was a failed object pool transfer
 	};
 } // namespace isobus
 

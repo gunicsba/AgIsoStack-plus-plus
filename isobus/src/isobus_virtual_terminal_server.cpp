@@ -2745,12 +2745,94 @@ namespace isobus
 					activeWorkingSetMasterAddress = ws->get_control_function()->get_address();
 					activeWorkingSetDataMaskObjectID = std::static_pointer_cast<WorkingSet>(ws->get_working_set_object())->get_active_mask();
 				}
+				// Clear any failed transfer tracking on success
+				ws->clear_failed_object_pool_transfer();
 			}
 			else if (VirtualTerminalServerManagedWorkingSet::ObjectPoolProcessingThreadState::Fail == ws->get_object_pool_processing_state())
 			{
 				ws->join_parsing_thread();
 				///  @todo Get the parent object ID of the faulting object
-				send_end_of_object_pool_response(true, NULL_OBJECT_ID, ws->get_object_pool_faulting_object_id(), 0, ws->get_control_function());
+				
+				// Check if this is a retryable failure
+				if (ws->has_failed_object_pool_transfer())
+				{
+					// Increment retry count
+					ws->increment_retry_count();
+					
+					// If we haven't exceeded max retries, attempt to restart the session
+					if (ws->get_retry_count() <= VirtualTerminalServerManagedWorkingSet::MAX_RETRY_COUNT)
+					{
+						LOG_INFO("[VT Server]: Attempting to restart failed object pool transfer for client %u (retry %u/%u)",
+						         ws->get_control_function()->get_address(),
+						         ws->get_retry_count(),
+						         VirtualTerminalServerManagedWorkingSet::MAX_RETRY_COUNT);
+						
+						// Clean up the failed session
+						ws->clear_callback_handles();
+						
+						// Request a new object pool transfer by sending a Get Memory message
+						// This will trigger the client to start a new ETP session
+						std::array<std::uint8_t, CAN_DATA_LENGTH> buffer = { 0 };
+						buffer[0] = static_cast<std::uint8_t>(Function::GetMemoryMessage);
+						buffer[1] = get_vt_version_byte(get_version());
+						buffer[2] = 0x00; // Not enough memory flag - this will trigger a new transfer
+						buffer[3] = 0xFF; // Reserved
+						buffer[4] = 0xFF; // Reserved
+						buffer[5] = 0xFF; // Reserved
+						buffer[6] = 0xFF; // Reserved
+						buffer[7] = 0xFF; // Reserved
+						
+						if (CANNetworkManager::CANNetwork.send_can_message(static_cast<std::uint32_t>(CANLibParameterGroupNumber::VirtualTerminalToECU),
+						                                                  buffer.data(),
+						                                                  CAN_DATA_LENGTH,
+						                                                  serverInternalControlFunction,
+						                                                  ws->get_control_function(),
+						                                                  get_priority()))
+						{
+							LOG_INFO("[VT Server]: Sent GetMemory message to trigger new object pool transfer for client %u",
+							         ws->get_control_function()->get_address());
+							
+							// Reset the object pool processing state to allow a new transfer
+							// Clear the existing failed data but keep tracking the failure
+							std::uint32_t failedSize = ws->get_failed_object_pool_size();
+							ws->clear_failed_object_pool_transfer();
+							ws->track_failed_object_pool_transfer(failedSize);
+							
+							// Reset the processing state to allow a new transfer
+							// We don't call set_object_pool_processing_state directly to avoid mutex issues
+							// Instead, we'll let the next ObjectPoolTransferMessage reset the state
+						}
+						else
+						{
+							LOG_ERROR("[VT Server]: Failed to send GetMemory message to client %u",
+							          ws->get_control_function()->get_address());
+							
+							// If we can't send the message, send the failure response
+							send_end_of_object_pool_response(false, NULL_OBJECT_ID, ws->get_object_pool_faulting_object_id(), 0, ws->get_control_function());
+						}
+					}
+					else
+					{
+						// Exceeded maximum retries, send failure response
+						LOG_ERROR("[VT Server]: Maximum retries exceeded for client %u, sending failure response",
+						          ws->get_control_function()->get_address());
+						send_end_of_object_pool_response(false, NULL_OBJECT_ID, ws->get_object_pool_faulting_object_id(), 0, ws->get_control_function());
+						ws->clear_failed_object_pool_transfer();
+					}
+				}
+				else
+				{
+					// This is the first failure, track it
+					// Estimate the size based on the raw data we received
+					std::uint32_t estimatedSize = 0;
+					for (size_t i = 0; i < ws->get_number_iop_files(); i++)
+					{
+						estimatedSize += static_cast<std::uint32_t>(ws->get_iop_raw_data(i).size());
+					}
+					
+					ws->track_failed_object_pool_transfer(estimatedSize);
+					send_end_of_object_pool_response(false, NULL_OBJECT_ID, ws->get_object_pool_faulting_object_id(), 0, ws->get_control_function());
+				}
 			}
 		}
 	}

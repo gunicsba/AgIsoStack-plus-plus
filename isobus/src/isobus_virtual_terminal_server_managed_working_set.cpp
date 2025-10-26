@@ -215,4 +215,50 @@ namespace isobus
 		return iop_load_percentage() != 0.0f;
 	}
 
+	// Retry mechanism implementation
+	void VirtualTerminalServerManagedWorkingSet::track_failed_object_pool_transfer(std::uint32_t size)
+	{
+		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
+		failedObjectPoolSize = size;
+		hasFailedObjectPoolTransfer = true;
+	}
+
+	bool VirtualTerminalServerManagedWorkingSet::has_failed_object_pool_transfer() const
+	{
+		return hasFailedObjectPoolTransfer;
+	}
+
+	std::uint32_t VirtualTerminalServerManagedWorkingSet::get_failed_object_pool_size() const
+	{
+		return failedObjectPoolSize;
+	}
+
+	std::uint32_t VirtualTerminalServerManagedWorkingSet::get_retry_count() const
+	{
+		return retryCount;
+	}
+
+	void VirtualTerminalServerManagedWorkingSet::increment_retry_count()
+	{
+		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
+		if (retryCount < MAX_RETRY_COUNT)
+		{
+			retryCount++;
+		}
+	}
+
+	void VirtualTerminalServerManagedWorkingSet::reset_retry_count()
+	{
+		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
+		retryCount = 0;
+	}
+
+	void VirtualTerminalServerManagedWorkingSet::clear_failed_object_pool_transfer()
+	{
+		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
+		hasFailedObjectPoolTransfer = false;
+		failedObjectPoolSize = 0;
+		retryCount = 0;
+	}
+
 } // namespace isobus
