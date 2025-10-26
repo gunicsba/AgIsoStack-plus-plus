@@ -133,6 +133,16 @@ namespace isobus
 			/// @return The total number of packets that will be sent or received in this session
 			std::uint32_t get_total_number_of_packets() const;
 
+			/// @brief Get the number of retry attempts for this session
+			/// @return The number of retry attempts
+			std::uint8_t get_retry_count() const;
+
+			/// @brief Increment the retry count for this session
+			void increment_retry_count();
+
+			/// @brief Reset the retry count for this session
+			void reset_retry_count();
+
 		private:
 			StateMachineState state = StateMachineState::None; ///< The state machine state for this session
 
@@ -141,6 +151,7 @@ namespace isobus
 			std::uint8_t lastSequenceNumber = 0; ///< The last processed sequence number for this set of packets
 			std::uint8_t dataPacketOffsetPacketCount = 0; ///< The number of packets that will be sent with the current DPO
 			std::uint8_t clearToSendPacketCountLimit = 0xFF; ///< The max packets that can be sent per DPO as indicated by the CTS message
+			std::uint8_t retryCount = 0; ///< The number of retry attempts for this session
 		};
 
 		static constexpr std::uint32_t REQUEST_TO_SEND_MULTIPLEXOR = 0x14; ///< (20) ETP.CM_RTS Multiplexor

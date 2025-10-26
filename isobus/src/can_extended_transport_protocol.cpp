@@ -119,6 +119,26 @@ namespace isobus
 		return totalNumberOfPackets;
 	}
 
+	std::uint8_t ExtendedTransportProtocolManager::ExtendedTransportProtocolSession::get_retry_count() const
+	{
+		return retryCount;
+	}
+
+	void ExtendedTransportProtocolManager::ExtendedTransportProtocolSession::increment_retry_count()
+	{
+		if (retryCount < 255) // Prevent overflow
+		{
+			retryCount++;
+		}
+		update_timestamp(); // Reset the timeout
+	}
+
+	void ExtendedTransportProtocolManager::ExtendedTransportProtocolSession::reset_retry_count()
+	{
+		retryCount = 0;
+		update_timestamp(); // Reset the timeout
+	}
+
 	ExtendedTransportProtocolManager::ExtendedTransportProtocolManager(const CANMessageFrameCallback &sendCANFrameCallback,
 	                                                                   const CANMessageCallback &canMessageReceivedCallback,
 	                                                                   const CANNetworkConfiguration *configuration) :
@@ -636,6 +656,9 @@ namespace isobus
 
 	void ExtendedTransportProtocolManager::update_state_machine(std::shared_ptr<ExtendedTransportProtocolSession> &session)
 	{
+		// Maximum number of retries before aborting
+		constexpr std::uint8_t MAX_RETRIES = 3;
+
 		switch (session->state)
 		{
 			case StateMachineState::None:
@@ -654,16 +677,32 @@ namespace isobus
 			{
 				if (session->get_time_since_last_update() > T2_T3_TIMEOUT_MS)
 				{
-					LOG_ERROR("[ETP]: Timeout tx session for 0x%05X (expected CTS)", session->get_parameter_group_number());
-					if (session->get_cts_number_of_packet_limit() > 0)
+					if (session->get_retry_count() < MAX_RETRIES)
 					{
-						// A connection is only considered established if we've received at least one CTS before
-						// And we can only abort a connection if it's considered established
-						abort_session(session, ConnectionAbortReason::Timeout);
+						LOG_WARNING("[ETP]: Timeout tx session for 0x%05X (expected CTS), retrying... (attempt %hu/%hu)", 
+							session->get_parameter_group_number(), 
+							session->get_retry_count() + 1, 
+							MAX_RETRIES);
+						session->increment_retry_count();
+						// Resend the request to send
+						if (send_request_to_send(session))
+						{
+							session->set_state(StateMachineState::WaitForClearToSend);
+						}
 					}
 					else
 					{
-						close_session(session, false);
+						LOG_ERROR("[ETP]: Timeout tx session for 0x%05X (expected CTS), max retries exceeded", session->get_parameter_group_number());
+						if (session->get_cts_number_of_packet_limit() > 0)
+						{
+							// A connection is only considered established if we've received at least one CTS before
+							// And we can only abort a connection if it's considered established
+							abort_session(session, ConnectionAbortReason::Timeout);
+						}
+						else
+						{
+							close_session(session, false);
+						}
 					}
 				}
 			}
@@ -682,8 +721,24 @@ namespace isobus
 			{
 				if (session->get_time_since_last_update() > T2_T3_TIMEOUT_MS)
 				{
-					LOG_ERROR("[ETP]: Timeout rx session for 0x%05X (expected DPO)", session->get_parameter_group_number());
-					abort_session(session, ConnectionAbortReason::Timeout);
+					if (session->get_retry_count() < MAX_RETRIES)
+					{
+						LOG_WARNING("[ETP]: Timeout rx session for 0x%05X (expected DPO), retrying... (attempt %hu/%hu)", 
+							session->get_parameter_group_number(), 
+							session->get_retry_count() + 1, 
+							MAX_RETRIES);
+						session->increment_retry_count();
+						// Resend the clear to send
+						if (send_clear_to_send(session))
+						{
+							session->set_state(StateMachineState::WaitForDataPacketOffset);
+						}
+					}
+					else
+					{
+						LOG_ERROR("[ETP]: Timeout rx session for 0x%05X (expected DPO), max retries exceeded", session->get_parameter_group_number());
+						abort_session(session, ConnectionAbortReason::Timeout);
+					}
 				}
 			}
 			break;
@@ -707,8 +762,23 @@ namespace isobus
 			{
 				if (session->get_time_since_last_update() > T1_TIMEOUT_MS)
 				{
-					LOG_ERROR("[ETP]: Timeout for destination-specific rx session (expected sequential data frame)");
-					abort_session(session, ConnectionAbortReason::Timeout);
+					if (session->get_retry_count() < MAX_RETRIES)
+					{
+						LOG_WARNING("[ETP]: Timeout for destination-specific rx session (expected sequential data frame), retrying... (attempt %hu/%hu)", 
+							session->get_retry_count() + 1, 
+							MAX_RETRIES);
+						session->increment_retry_count();
+						// Resend the data packet offset
+						if (send_data_packet_offset(session))
+						{
+							session->set_state(StateMachineState::SendDataTransferPackets);
+						}
+					}
+					else
+					{
+						LOG_ERROR("[ETP]: Timeout for destination-specific rx session (expected sequential data frame), max retries exceeded");
+						abort_session(session, ConnectionAbortReason::Timeout);
+					}
 				}
 			}
 			break;
@@ -717,8 +787,21 @@ namespace isobus
 			{
 				if (session->get_time_since_last_update() > T2_T3_TIMEOUT_MS)
 				{
-					LOG_ERROR("[ETP]: Timeout tx session for 0x%05X (expected EOMA)", session->get_parameter_group_number());
-					abort_session(session, ConnectionAbortReason::Timeout);
+					if (session->get_retry_count() < MAX_RETRIES)
+					{
+						LOG_WARNING("[ETP]: Timeout tx session for 0x%05X (expected EOMA), retrying... (attempt %hu/%hu)", 
+							session->get_parameter_group_number(), 
+							session->get_retry_count() + 1, 
+							MAX_RETRIES);
+						session->increment_retry_count();
+						// Resend the last data packets
+						send_data_transfer_packets(session);
+					}
+					else
+					{
+						LOG_ERROR("[ETP]: Timeout tx session for 0x%05X (expected EOMA), max retries exceeded", session->get_parameter_group_number());
+						abort_session(session, ConnectionAbortReason::Timeout);
+					}
 				}
 			}
 			break;
