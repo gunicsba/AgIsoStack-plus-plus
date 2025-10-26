@@ -657,7 +657,8 @@ namespace isobus
 	void ExtendedTransportProtocolManager::update_state_machine(std::shared_ptr<ExtendedTransportProtocolSession> &session)
 	{
 		// Maximum number of retries before aborting
-		constexpr std::uint8_t MAX_RETRIES = 3;
+		// Using a higher retry count to improve reliability in less than ideal network conditions
+		constexpr std::uint8_t MAX_RETRIES = 5; // Increased from 3 to 5
 
 		switch (session->state)
 		{
@@ -684,11 +685,9 @@ namespace isobus
 							session->get_retry_count() + 1, 
 							MAX_RETRIES);
 						session->increment_retry_count();
-						// Resend the request to send
-						if (send_request_to_send(session))
-						{
-							session->set_state(StateMachineState::WaitForClearToSend);
-						}
+						// For CTS timeout, we don't resend the request to send to avoid sequence issues
+						// Instead, we just reset the timeout and wait for the CTS to arrive
+						session->update_timestamp(); // Reset the timeout timer
 					}
 					else
 					{
@@ -728,11 +727,9 @@ namespace isobus
 							session->get_retry_count() + 1, 
 							MAX_RETRIES);
 						session->increment_retry_count();
-						// Resend the clear to send
-						if (send_clear_to_send(session))
-						{
-							session->set_state(StateMachineState::WaitForDataPacketOffset);
-						}
+						// For DPO timeout, we don't resend the clear to send to avoid sequence issues
+						// Instead, we just reset the timeout and wait for the DPO to arrive
+						session->update_timestamp(); // Reset the timeout timer
 					}
 					else
 					{
