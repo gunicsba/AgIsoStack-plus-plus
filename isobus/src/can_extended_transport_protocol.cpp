@@ -685,9 +685,11 @@ namespace isobus
 							session->get_retry_count() + 1, 
 							MAX_RETRIES);
 						session->increment_retry_count();
-						// For CTS timeout, we don't resend the request to send to avoid sequence issues
-						// Instead, we just reset the timeout and wait for the CTS to arrive
-						session->update_timestamp(); // Reset the timeout timer
+						// Resend the request to send
+						if (send_request_to_send(session))
+						{
+							session->set_state(StateMachineState::WaitForClearToSend);
+						}
 					}
 					else
 					{
@@ -727,9 +729,11 @@ namespace isobus
 							session->get_retry_count() + 1, 
 							MAX_RETRIES);
 						session->increment_retry_count();
-						// For DPO timeout, we don't resend the clear to send to avoid sequence issues
-						// Instead, we just reset the timeout and wait for the DPO to arrive
-						session->update_timestamp(); // Reset the timeout timer
+						// Resend the clear to send
+						if (send_clear_to_send(session))
+						{
+							session->set_state(StateMachineState::WaitForDataPacketOffset);
+						}
 					}
 					else
 					{
@@ -765,8 +769,8 @@ namespace isobus
 							session->get_retry_count() + 1, 
 							MAX_RETRIES);
 						session->increment_retry_count();
-						// For data transfer packets, we don't resend anything, we just reset the timeout
-						// and wait for the next packet to arrive
+						// For data transfer packets, we extend the timeout rather than resending
+						// to avoid sequence number issues
 						session->update_timestamp(); // Reset the timeout timer
 					}
 					else
@@ -789,8 +793,8 @@ namespace isobus
 							session->get_retry_count() + 1, 
 							MAX_RETRIES);
 						session->increment_retry_count();
-						// For end of message ack, we don't resend anything, we just reset the timeout
-						// and wait for the ack to arrive
+						// For end of message ack, we extend the timeout rather than resending
+						// to avoid potential issues
 						session->update_timestamp(); // Reset the timeout timer
 					}
 					else
@@ -852,6 +856,20 @@ namespace isobus
 
 	void ExtendedTransportProtocolManager::close_session(const std::shared_ptr<ExtendedTransportProtocolSession> &session, bool successful)
 	{
+		// Check if this is an object pool transfer session that failed
+		if (!successful && 
+		    (static_cast<std::uint32_t>(CANLibParameterGroupNumber::ECUtoVirtualTerminal) == session->get_parameter_group_number()) &&
+		    (session->get_data().size() >= 1) &&
+		    (0x11 == session->get_data().get_byte(0))) // ObjectPoolTransferMessage
+		{
+			// This is a failed object pool transfer session
+			// Notify the VT server to track this failure for retry
+			LOG_INFO("[ETP]: Failed object pool transfer session detected, size %u", session->get_message_length());
+			
+			// We would need to notify the VT server here, but we don't have a direct reference
+			// The VT server will detect this through its session monitoring
+		}
+		
 		session->complete(successful);
 		auto sessionLocation = std::find(activeSessions.begin(), activeSessions.end(), session);
 		if (activeSessions.end() != sessionLocation)

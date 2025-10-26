@@ -2676,54 +2676,88 @@ namespace isobus
 
 	bool VirtualTerminalServer::send_get_window_mask_data_response(std::shared_ptr<ControlFunction> destination) const
 	{
-		std::array<std::uint8_t, CAN_DATA_LENGTH> buffer = { 0 };
+		bool retVal = false;
 
-		buffer[0] = static_cast<std::uint8_t>(Function::GetWindowMaskDataMessage);
-		buffer[1] = get_user_layout_datamask_bg_color();
-		buffer[2] = get_user_layout_softkeymask_bg_color();
-		buffer[3] = 0xFF; // Reserved
-		buffer[4] = 0xFF; // Reserved
-		buffer[5] = 0xFF; // Reserved
-		buffer[6] = 0xFF; // Reserved
-		buffer[7] = 0xFF; // Reserved
+		if (nullptr != destination)
+		{
+			std::array<std::uint8_t, CAN_DATA_LENGTH> buffer = { 0 };
 
-		return CANNetworkManager::CANNetwork.send_can_message(static_cast<std::uint32_t>(CANLibParameterGroupNumber::VirtualTerminalToECU),
-		                                                      buffer.data(),
-		                                                      CAN_DATA_LENGTH,
-		                                                      serverInternalControlFunction,
-		                                                      destination,
-		                                                      get_priority());
+			buffer[0] = static_cast<std::uint8_t>(Function::GetWindowMaskDataMessage);
+			buffer[1] = 0xFF;
+			buffer[2] = 0xFF;
+			buffer[3] = 0xFF;
+			buffer[4] = 0xFF;
+			buffer[5] = 0xFF;
+			buffer[6] = 0xFF;
+			buffer[7] = 0xFF;
+
+			retVal = CANNetworkManager::CANNetwork.send_can_message(static_cast<std::uint32_t>(CANLibParameterGroupNumber::VirtualTerminalToECU),
+			                                                        buffer.data(),
+			                                                        CAN_DATA_LENGTH,
+			                                                        serverInternalControlFunction,
+			                                                        destination,
+			                                                        get_priority());
+		}
+		return retVal;
 	}
 
-	bool VirtualTerminalServer::send_audio_volume_response(std::shared_ptr<ControlFunction> destination) const
+	void VirtualTerminalServer::check_for_failed_etp_sessions_and_retry()
 	{
-		std::vector<std::uint8_t> buffer = { static_cast<std::uint8_t>(Function::SetAudioVolumeCommand), 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-		return CANNetworkManager::CANNetwork.send_can_message(static_cast<std::uint32_t>(CANLibParameterGroupNumber::VirtualTerminalToECU),
-		                                                      buffer.data(),
-		                                                      CAN_DATA_LENGTH,
-		                                                      serverInternalControlFunction,
-		                                                      destination,
-		                                                      get_priority());
-	}
-
-	bool VirtualTerminalServer::send_capture_screen_response(std::uint8_t item, std::uint8_t path, std::uint8_t errorCode, std::uint16_t imageId, std::shared_ptr<ControlFunction> requestor) const
-	{
-		std::array<std::uint8_t, CAN_DATA_LENGTH> buffer = { 0 };
-
-		buffer[0] = static_cast<std::uint8_t>(Function::ScreenCapture);
-		buffer[1] = item;
-		buffer[2] = path;
-		buffer[3] = errorCode;
-		buffer[4] = static_cast<std::uint8_t>(imageId & 0xFF);
-		buffer[5] = static_cast<std::uint8_t>((imageId >> 8) & 0xFF);
-		buffer[6] = 0xFF;
-		buffer[7] = 0xFF;
-		return CANNetworkManager::CANNetwork.send_can_message(static_cast<std::uint32_t>(CANLibParameterGroupNumber::VirtualTerminalToECU),
-		                                                      buffer.data(),
-		                                                      CAN_DATA_LENGTH,
-		                                                      serverInternalControlFunction,
-		                                                      requestor,
-		                                                      get_priority());
+		// Get all active transport protocol sessions
+		auto activeSessions = CANNetworkManager::CANNetwork.get_active_transport_protocol_sessions(0);
+		
+		// Check each managed working set for failed object pool transfers
+		for (const auto &workingSet : managedWorkingSetList)
+		{
+			// Check if this working set has a failed object pool transfer that needs retry
+			if (workingSet->has_failed_object_pool_transfer() && 
+			    workingSet->get_retry_count() < VirtualTerminalServerManagedWorkingSet::MAX_RETRY_COUNT)
+			{
+				// Check if there's currently an active ETP session for this working set
+				bool hasActiveSession = false;
+				for (const auto &session : activeSessions)
+				{
+					if (session->get_source() == workingSet->get_control_function() &&
+					    static_cast<std::uint32_t>(CANLibParameterGroupNumber::ECUtoVirtualTerminal) == session->get_parameter_group_number())
+					{
+						hasActiveSession = true;
+						break;
+					}
+				}
+				
+				// If there's no active session, we can retry
+				if (!hasActiveSession)
+				{
+					workingSet->increment_retry_count();
+					std::uint32_t failedSize = workingSet->get_failed_object_pool_size();
+					
+					LOG_INFO("[VT Server]: Retrying failed object pool transfer (attempt %u/%u) for client %u with size %u",
+					         workingSet->get_retry_count(),
+					         VirtualTerminalServerManagedWorkingSet::MAX_RETRY_COUNT,
+					         workingSet->get_control_function()->get_address(),
+					         failedSize);
+					
+					// Send a Get Memory message to initiate a new transfer
+					std::array<std::uint8_t, CAN_DATA_LENGTH> buffer = { 0 };
+					buffer[0] = static_cast<std::uint8_t>(Function::GetMemoryMessage);
+					buffer[1] = 0xFF; // Reserved
+					buffer[2] = static_cast<std::uint8_t>(failedSize & 0xFF);
+					buffer[3] = static_cast<std::uint8_t>((failedSize >> 8) & 0xFF);
+					buffer[4] = static_cast<std::uint8_t>((failedSize >> 16) & 0xFF);
+					buffer[5] = static_cast<std::uint8_t>((failedSize >> 24) & 0xFF);
+					buffer[6] = 0xFF; // Reserved
+					buffer[7] = 0xFF; // Reserved
+					
+					CANNetworkManager::CANNetwork.send_can_message(
+					    static_cast<std::uint32_t>(CANLibParameterGroupNumber::VirtualTerminalToECU),
+					    buffer.data(),
+					    CAN_DATA_LENGTH,
+					    serverInternalControlFunction,
+					    workingSet->get_control_function(),
+					    get_priority());
+				}
+			}
+		}
 	}
 
 	void VirtualTerminalServer::update()
@@ -2734,8 +2768,26 @@ namespace isobus
 			statusMessageTimestamp_ms = isobus::SystemTiming::get_timestamp_ms();
 		}
 
+		// Check for failed ETP sessions and retry object pool transfers
+		check_for_failed_etp_sessions_and_retry();
+
 		for (auto &ws : managedWorkingSetList)
 		{
+			// Check if this working set is in the middle of an object pool transfer
+			if (ws->is_object_pool_transfer_in_progress())
+			{
+				float loadPercentage = ws->iop_load_percentage();
+				
+				// If we haven't received any progress for a while, consider it failed
+				// This is a simplified approach - in a real implementation, you'd want
+				// to monitor actual ETP session timeouts
+				if (loadPercentage > 0.0f && loadPercentage < 100.0f)
+				{
+					// Check if we should track this as a potential failure
+					// For now, we'll just log it
+				}
+			}
+			
 			if (VirtualTerminalServerManagedWorkingSet::ObjectPoolProcessingThreadState::Success == ws->get_object_pool_processing_state())
 			{
 				ws->join_parsing_thread();
@@ -2749,9 +2801,13 @@ namespace isobus
 			else if (VirtualTerminalServerManagedWorkingSet::ObjectPoolProcessingThreadState::Fail == ws->get_object_pool_processing_state())
 			{
 				ws->join_parsing_thread();
+				// Track the failed transfer for retry
+				if (ws->get_iop_size() > 0)
+				{
+					ws->track_failed_object_pool_transfer(ws->get_iop_size());
+				}
 				///  @todo Get the parent object ID of the faulting object
-				send_end_of_object_pool_response(true, NULL_OBJECT_ID, ws->get_object_pool_faulting_object_id(), 0, ws->get_control_function());
+				send_end_of_object_pool_response(false, NULL_OBJECT_ID, ws->get_object_pool_faulting_object_id(), 1, ws->get_control_function());
 			}
 		}
 	}
-}

@@ -147,7 +147,20 @@ namespace isobus
 
 		/// @brief This function is called when the interface needs to know the number of physical soft keys
 		/// @returns The number of physical soft keys
-		virtual std::uint8_t get_number_of_physical_soft_keys() const = 0;
+		virtual std::uint8_t get_number_of_physical_soft_keys() const;
+
+		/// @brief Processes a CAN message received by the VT server
+		/// @param[in] message The CAN message being received
+		/// @param[in] parent The VT server instance
+		static void process_rx_message(const CANMessage &message, void *parent);
+
+		/// @brief Sends an acknowledgement message
+		/// @param[in] type The type of acknowledgement to send
+		/// @param[in] parameterGroupNumber The PGN of the message being acknowledged
+		/// @param[in] source The source control function
+		/// @param[in] destination The destination control function
+		/// @returns true if the message was sent, otherwise false
+		bool send_acknowledgement(AcknowledgementType type, std::uint32_t parameterGroupNumber, std::shared_ptr<InternalControlFunction> source, std::shared_ptr<ControlFunction> destination) const;
 
 		/// @brief This function is called when the interface needs to know the number of x pixels (width) of your data key mask render area
 		/// @returns The number of x pixels (width) of your soft key mask render area
@@ -547,19 +560,6 @@ namespace isobus
 		/// @returns The VT version byte associated to the specified version
 		static std::uint8_t get_vt_version_byte(VTVersion version);
 
-		/// @brief Processes a CAN message from any VT client
-		/// @param[in] message The CAN message being received
-		/// @param[in] parent A context variable to find the relevant VT server class
-		static void process_rx_message(const CANMessage &message, void *parent);
-
-		/// @brief Sends a message using the acknowledgement PGN
-		/// @param[in] type The type of acknowledgement to send (Ack, vs Nack, etc)
-		/// @param[in] parameterGroupNumber The PGN to acknowledge
-		/// @param[in] source The source control function to send from
-		/// @param[in] destination The destination control function to send the acknowledgement to
-		/// @returns true if the message was sent, false otherwise
-		bool send_acknowledgement(AcknowledgementType type, std::uint32_t parameterGroupNumber, std::shared_ptr<InternalControlFunction> source, std::shared_ptr<ControlFunction> destination) const;
-
 		/// @brief Sends a response to a change active mask command
 		/// @param[in] newMaskObjectID The object ID for the new active mask
 		/// @param[in] errorBitfield An error bitfield
@@ -771,6 +771,9 @@ namespace isobus
 		/// @param[in] destination The control function to send the message to
 		/// @returns true if the message was sent
 		bool send_get_window_mask_data_response(std::shared_ptr<ControlFunction> destination) const;
+
+		/// @brief Checks for failed ETP sessions and initiates retries for object pool transfers
+		void check_for_failed_etp_sessions_and_retry();
 
 		/// @brief Cyclic update function
 		void update();

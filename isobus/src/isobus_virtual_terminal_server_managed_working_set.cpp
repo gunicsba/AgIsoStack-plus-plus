@@ -167,6 +167,34 @@ namespace isobus
 		return (static_cast<float>(currentTransferredIopSize) / static_cast<float>(iopSize)) * 100.0f;
 	}
 
+	void VirtualTerminalServerManagedWorkingSet::add_iop_raw_data(const std::vector<std::uint8_t> &data)
+	{
+		// Check if this is the start of a new object pool transfer
+		if (!data.empty() && data[0] == 0x11) // ObjectPoolTransferMessage
+		{
+			// If we don't have any IOP data yet, this is the start of a new transfer
+			if (iopFilesRawData.empty())
+			{
+				// Clear any previous failed transfer tracking
+				clear_failed_object_pool_transfer();
+			}
+		}
+		
+		iopFilesRawData.push_back(data);
+		transferredIopSize += static_cast<std::uint32_t>(data.size());
+
+		// Check if we've received all the expected data
+		if ((iopSize > 0) && (transferredIopSize >= iopSize))
+		{
+			// We've received all the data, start parsing
+			start_parsing_thread();
+		}
+		else if (iopSize > 0 && transferredIopSize < iopSize)
+		{
+			// We're still receiving data, do nothing
+		}
+	}
+
 	void VirtualTerminalServerManagedWorkingSet::set_object_pool_processing_state(ObjectPoolProcessingThreadState value)
 	{
 		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
@@ -213,6 +241,60 @@ namespace isobus
 	bool VirtualTerminalServerManagedWorkingSet::is_object_pool_transfer_in_progress() const
 	{
 		return iop_load_percentage() != 0.0f;
+	}
+
+	void VirtualTerminalServerManagedWorkingSet::track_failed_object_pool_transfer(std::uint32_t dataSize)
+	{
+		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
+		failedObjectPoolSize = dataSize;
+		LOG_INFO("[WS]: Tracking failed object pool transfer of size %u for retry", dataSize);
+	}
+
+	bool VirtualTerminalServerManagedWorkingSet::has_failed_object_pool_transfer() const
+	{
+		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
+		return failedObjectPoolSize > 0;
+	}
+
+	std::uint32_t VirtualTerminalServerManagedWorkingSet::get_failed_object_pool_size() const
+	{
+		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
+		return failedObjectPoolSize;
+	}
+
+	void VirtualTerminalServerManagedWorkingSet::clear_failed_object_pool_transfer()
+	{
+		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
+		failedObjectPoolSize = 0;
+		retryCount = 0;
+		LOG_INFO("[WS]: Cleared failed object pool transfer tracking");
+	}
+
+	void VirtualTerminalServerManagedWorkingSet::increment_retry_count()
+	{
+		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
+		if (retryCount < MAX_RETRY_COUNT)
+		{
+			retryCount++;
+			LOG_INFO("[WS]: Incremented retry count to %u", retryCount);
+		}
+		else
+		{
+			LOG_WARNING("[WS]: Maximum retry count reached (%u)", MAX_RETRY_COUNT);
+		}
+	}
+
+	std::uint8_t VirtualTerminalServerManagedWorkingSet::get_retry_count() const
+	{
+		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
+		return retryCount;
+	}
+
+	void VirtualTerminalServerManagedWorkingSet::reset_retry_count()
+	{
+		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
+		retryCount = 0;
+		LOG_INFO("[WS]: Reset retry count to 0");
 	}
 
 } // namespace isobus
