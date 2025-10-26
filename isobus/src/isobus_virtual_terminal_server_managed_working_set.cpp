@@ -256,6 +256,12 @@ namespace isobus
 		return failedObjectPoolSize > 0;
 	}
 
+	std::uint32_t VirtualTerminalServerManagedWorkingSet::get_iop_size() const
+	{
+		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);
+		return iopSize;
+	}
+
 	std::uint32_t VirtualTerminalServerManagedWorkingSet::get_failed_object_pool_size() const
 	{
 		const std::lock_guard<std::mutex> lock(managedWorkingSetMutex);

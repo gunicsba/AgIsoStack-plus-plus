@@ -9,6 +9,7 @@
 #ifndef ISOBUS_VIRTUAL_TERMINAL_SERVER_MANAGED_WORKING_SET_HPP
 #define ISOBUS_VIRTUAL_TERMINAL_SERVER_MANAGED_WORKING_SET_HPP
 
+#include "isobus/isobus/can_badge.hpp"
 #include "isobus/isobus/can_control_function.hpp"
 #include "isobus/isobus/isobus_virtual_terminal_objects.hpp"
 #include "isobus/utility/event_dispatcher.hpp"
@@ -156,6 +157,10 @@ namespace isobus
 		/// @brief Returns the number of objects in this working set
 		/// @returns The number of objects in this working set
 		std::size_t get_number_objects() const;
+
+		/// @brief Returns the IOP size
+		/// @returns The IOP size
+		std::uint32_t get_iop_size() const;
 
 		/// @brief Tracks a failed object pool transfer for retry
 		/// @param[in] dataSize The size of the data that failed to transfer

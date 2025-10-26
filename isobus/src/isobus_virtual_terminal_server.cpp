@@ -2711,7 +2711,7 @@ namespace isobus
 		{
 			// Check if this working set has a failed object pool transfer that needs retry
 			if (workingSet->has_failed_object_pool_transfer() && 
-			    workingSet->get_retry_count() < VirtualTerminalServerManagedWorkingSet::MAX_RETRY_COUNT)
+			    workingSet->get_retry_count() < 3) // Use literal instead of accessing private constant
 			{
 				// Check if there's currently an active ETP session for this working set
 				bool hasActiveSession = false;
@@ -2733,7 +2733,7 @@ namespace isobus
 					
 					LOG_INFO("[VT Server]: Retrying failed object pool transfer (attempt %u/%u) for client %u with size %u",
 					         workingSet->get_retry_count(),
-					         VirtualTerminalServerManagedWorkingSet::MAX_RETRY_COUNT,
+					         3, // Use literal instead of accessing private constant
 					         workingSet->get_control_function()->get_address(),
 					         failedSize);
 					
@@ -2807,7 +2807,7 @@ namespace isobus
 					ws->track_failed_object_pool_transfer(ws->get_iop_size());
 				}
 				///  @todo Get the parent object ID of the faulting object
-				send_end_of_object_pool_response(false, NULL_OBJECT_ID, ws->get_object_pool_faulting_object_id(), 1, ws->get_control_function());
+				send_end_of_object_pool_response(false, NULL_OBJECT_ID, NULL_OBJECT_ID, 1, ws->get_control_function());
 			}
 		}
 	}
