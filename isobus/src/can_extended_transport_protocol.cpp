@@ -768,12 +768,9 @@ namespace isobus
 							session->get_retry_count() + 1, 
 							MAX_RETRIES);
 						session->increment_retry_count();
-						// Resend the data packet offset and properly set state
-						if (send_data_packet_offset(session))
-						{
-							// After sending DPO, we need to wait for the data packets
-							session->set_state(StateMachineState::WaitForDataTransferPacket);
-						}
+						// For data transfer packets, we don't resend anything, we just reset the timeout
+						// and wait for the next packet to arrive
+						session->update_timestamp(); // Reset the timeout timer
 					}
 					else
 					{
@@ -795,10 +792,9 @@ namespace isobus
 							session->get_retry_count() + 1, 
 							MAX_RETRIES);
 						session->increment_retry_count();
-						// Resend the last data packets
-						send_data_transfer_packets(session);
-						// Stay in the same state to wait for EOMA
-						session->set_state(StateMachineState::WaitForEndOfMessageAcknowledge);
+						// For end of message ack, we don't resend anything, we just reset the timeout
+						// and wait for the ack to arrive
+						session->update_timestamp(); // Reset the timeout timer
 					}
 					else
 					{
