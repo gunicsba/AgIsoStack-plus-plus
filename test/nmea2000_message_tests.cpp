@@ -8,6 +8,7 @@
 #include "isobus/utility/system_timing.hpp"
 
 #include "helpers/control_function_helpers.hpp"
+#include "helpers/test_fixture.hpp"
 
 using namespace isobus;
 using namespace NMEA2000Messages;
@@ -61,7 +62,12 @@ static void test_vessel_heading_callback(const std::shared_ptr<VesselHeading>, b
 	wasVesselHeadingCallbackHit = true;
 }
 
-TEST(NMEA2000_TESTS, VesselHeadingDataInterface)
+class NMEA2000Test : public AgIsoStackTestFixture
+{
+	// Wrapper to give tests a more meaningful name - no content.
+};
+
+TEST_F(NMEA2000Test, VesselHeadingDataInterface)
 {
 	VesselHeading messageDataUnderTest(nullptr);
 
@@ -100,13 +106,13 @@ TEST(NMEA2000_TESTS, VesselHeadingDataInterface)
 	EXPECT_EQ(2, serializationBuffer.at(3)); // Deviation
 	EXPECT_EQ(0, serializationBuffer.at(4)); // Deviation
 
-	std::int16_t tempVariation = static_cast<int16_t>(serializationBuffer.at(5));
-	tempVariation |= (static_cast<int16_t>(serializationBuffer.at(6)) << 8);
+	std::int16_t tempVariation = static_cast<std::int16_t>(serializationBuffer.at(5));
+	tempVariation |= (static_cast<std::int16_t>(serializationBuffer.at(6)) << 8);
 	EXPECT_EQ(-3, tempVariation); // Variation
 	EXPECT_EQ(0, serializationBuffer.at(7) & 0x03); // True Reference Source
 }
 
-TEST(NMEA2000_TESTS, RateOfTurnDataInterface)
+TEST_F(NMEA2000Test, RateOfTurnDataInterface)
 {
 	RateOfTurn messageDataUnderTest(nullptr);
 
@@ -130,17 +136,17 @@ TEST(NMEA2000_TESTS, RateOfTurnDataInterface)
 	ASSERT_EQ(CAN_DATA_LENGTH, serializationBuffer.size());
 	EXPECT_EQ(200, serializationBuffer.at(0));
 
-	std::int32_t rateOfTurn = static_cast<int32_t>(serializationBuffer.at(1));
-	rateOfTurn |= (static_cast<int32_t>(serializationBuffer.at(2)) << 8);
-	rateOfTurn |= (static_cast<int32_t>(serializationBuffer.at(3)) << 16);
-	rateOfTurn |= (static_cast<int32_t>(serializationBuffer.at(4)) << 24);
+	std::int32_t rateOfTurn = static_cast<std::int32_t>(serializationBuffer.at(1));
+	rateOfTurn |= (static_cast<std::int32_t>(serializationBuffer.at(2)) << 8);
+	rateOfTurn |= (static_cast<std::int32_t>(serializationBuffer.at(3)) << 16);
+	rateOfTurn |= (static_cast<std::int32_t>(serializationBuffer.at(4)) << 24);
 	EXPECT_EQ(rateOfTurn, 100);
 	EXPECT_EQ(0xFF, serializationBuffer.at(5));
 	EXPECT_EQ(0xFF, serializationBuffer.at(6));
 	EXPECT_EQ(0xFF, serializationBuffer.at(7));
 }
 
-TEST(NMEA2000_TESTS, PositionRapidUpdateDataInterface)
+TEST_F(NMEA2000Test, PositionRapidUpdateDataInterface)
 {
 	PositionRapidUpdate messageDataUnderTest(nullptr);
 
@@ -178,7 +184,7 @@ TEST(NMEA2000_TESTS, PositionRapidUpdateDataInterface)
 	EXPECT_EQ(longitude, 2000);
 }
 
-TEST(NMEA2000_TESTS, CourseOverGroundSpeedOverGroundRapidUpdateDataInterface)
+TEST_F(NMEA2000Test, CourseOverGroundSpeedOverGroundRapidUpdateDataInterface)
 {
 	CourseOverGroundSpeedOverGroundRapidUpdate messageDataUnderTest(nullptr);
 
@@ -222,7 +228,7 @@ TEST(NMEA2000_TESTS, CourseOverGroundSpeedOverGroundRapidUpdateDataInterface)
 	EXPECT_EQ(0xFF, serializationBuffer.at(7));
 }
 
-TEST(NMEA2000_Tests, PositionDeltaHighPrecisionRapidUpdateDataInterface)
+TEST_F(NMEA2000Test, PositionDeltaHighPrecisionRapidUpdateDataInterface)
 {
 	PositionDeltaHighPrecisionRapidUpdate messageDataUnderTest(nullptr);
 
@@ -261,7 +267,7 @@ TEST(NMEA2000_Tests, PositionDeltaHighPrecisionRapidUpdateDataInterface)
 	// Need to sign extend the value...
 	if (messageBuffer.at(4) & 0x80)
 	{
-		deltaLatitude |= static_cast<int32_t>(0xFF000000);
+		deltaLatitude |= static_cast<std::int32_t>(0xFF000000);
 	}
 	EXPECT_EQ(-5000, deltaLatitude);
 
@@ -272,12 +278,12 @@ TEST(NMEA2000_Tests, PositionDeltaHighPrecisionRapidUpdateDataInterface)
 	// Need to sign extend the value...
 	if (messageBuffer.at(7) & 0x80)
 	{
-		deltaLongitude |= static_cast<int32_t>(0xFF000000);
+		deltaLongitude |= static_cast<std::int32_t>(0xFF000000);
 	}
 	EXPECT_EQ(-9000, deltaLongitude);
 }
 
-TEST(NMEA2000_Tests, GNSSPositionDataDataInterface)
+TEST_F(NMEA2000Test, GNSSPositionDataDataInterface)
 {
 	GNSSPositionData messageDataUnderTest(nullptr);
 
@@ -412,14 +418,14 @@ TEST(NMEA2000_Tests, GNSSPositionDataDataInterface)
 	EXPECT_EQ(0, messageBuffer.at(46));
 }
 
-TEST(NMEA2000_Tests, NMEA2KInterface)
+TEST_F(NMEA2000Test, NMEA2KInterface)
 {
 	VirtualCANPlugin testPlugin;
 	testPlugin.open();
 
 	CANHardwareInterface::set_number_of_can_channels(1);
 	CANHardwareInterface::assign_can_channel_frame_handler(0, std::make_shared<VirtualCANPlugin>());
-	CANHardwareInterface::start();
+	CANHardwareInterface::start(false);
 
 	isobus::NAME TestDeviceNAME(0);
 	TestDeviceNAME.set_arbitrary_address_capable(true);
@@ -432,7 +438,7 @@ TEST(NMEA2000_Tests, NMEA2KInterface)
 	TestDeviceNAME.set_device_class_instance(0);
 	TestDeviceNAME.set_manufacturer_code(1407);
 
-	auto testECU = test_helpers::claim_internal_control_function(0x51, 0);
+	auto testECU = test_helpers::claim_internal_control_function(0x51, 0, time_source);
 	test_helpers::force_claim_partnered_control_function(0x52, 0);
 
 	// Get the virtual CAN plugin back to a known state
@@ -489,6 +495,7 @@ TEST(NMEA2000_Tests, NMEA2KInterface)
 		EXPECT_NEAR(544 * 1E-2f, message.get_speed_over_ground(), 0.001);
 
 		interfaceUnderTest.update();
+		time_source.update_for_ms(5);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame));
 
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
@@ -571,11 +578,12 @@ TEST(NMEA2000_Tests, NMEA2KInterface)
 
 		while (SystemTiming::get_timestamp_ms() < message.get_timeout())
 		{
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			time_source.update_for_ms(100);
 		}
 
 		interfaceUnderTest.update();
 		CANNetworkManager::CANNetwork.update();
+		time_source.update_for_ms(5);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame));
 
 		// Message encoding tested elsewhere, just verify PGN in the Fast packet
@@ -586,8 +594,10 @@ TEST(NMEA2000_Tests, NMEA2KInterface)
 		memcpy(lastFastPacketPayload.data(), &testFrame.data[2], 6);
 
 		// wait for the rest of the FP...
+		time_source.update_for_ms(51);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame)); // FP Payload 2
 		memcpy(lastFastPacketPayload.data() + 6, &testFrame.data[1], 7);
+		time_source.update_for_ms(51);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame)); // FP Payload 3
 		memcpy(lastFastPacketPayload.data() + 13, &testFrame.data[1], 7);
 
@@ -678,6 +688,7 @@ TEST(NMEA2000_Tests, NMEA2KInterface)
 
 		interfaceUnderTest.update();
 		CANNetworkManager::CANNetwork.update();
+		time_source.update_for_ms(5);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame));
 
 		// Message encoding tested elsewhere, just verify PGN in the Fast packet
@@ -685,16 +696,22 @@ TEST(NMEA2000_Tests, NMEA2KInterface)
 		memcpy(lastFastPacketPayload.data(), &testFrame.data[2], 6);
 
 		// wait for the rest of the FP to complete
+		time_source.update_for_ms(51);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame)); // FP Payload 2
 		memcpy(lastFastPacketPayload.data() + 6, &testFrame.data[1], 7);
+		time_source.update_for_ms(51);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame)); // FP Payload 3
 		memcpy(lastFastPacketPayload.data() + 13, &testFrame.data[1], 7);
+		time_source.update_for_ms(51);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame)); // FP Payload 4
 		memcpy(lastFastPacketPayload.data() + 20, &testFrame.data[1], 7);
+		time_source.update_for_ms(51);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame)); // FP Payload 5
 		memcpy(lastFastPacketPayload.data() + 27, &testFrame.data[1], 7);
+		time_source.update_for_ms(51);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame)); // FP Payload 6
 		memcpy(lastFastPacketPayload.data() + 34, &testFrame.data[1], 7);
+		time_source.update_for_ms(51);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame)); // FP Payload 7
 		memcpy(lastFastPacketPayload.data() + 41, &testFrame.data[1], 5);
 
@@ -779,6 +796,7 @@ TEST(NMEA2000_Tests, NMEA2KInterface)
 
 		interfaceUnderTest.update();
 		CANNetworkManager::CANNetwork.update();
+		time_source.update_for_ms(5);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame));
 
 		// Message encoding tested elsewhere, just verify PGN
@@ -844,6 +862,7 @@ TEST(NMEA2000_Tests, NMEA2KInterface)
 
 		interfaceUnderTest.update();
 		CANNetworkManager::CANNetwork.update();
+		time_source.update_for_ms(5);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame));
 
 		// Message encoding tested elsewhere, just verify PGN in the Fast packet
@@ -899,6 +918,7 @@ TEST(NMEA2000_Tests, NMEA2KInterface)
 
 		interfaceUnderTest.update();
 		CANNetworkManager::CANNetwork.update();
+		time_source.update_for_ms(5);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame));
 
 		// Message encoding tested elsewhere, just verify PGN
@@ -956,6 +976,7 @@ TEST(NMEA2000_Tests, NMEA2KInterface)
 
 		interfaceUnderTest.update();
 		CANNetworkManager::CANNetwork.update();
+		time_source.update_for_ms(5);
 		ASSERT_TRUE(testPlugin.read_frame(testFrame));
 
 		// Message encoding tested elsewhere, just verify PGN in the Fast packet

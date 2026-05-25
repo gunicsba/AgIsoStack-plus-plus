@@ -5,8 +5,9 @@ set(UTILITY_SRC_DIR "src")
 set(UTILITY_INCLUDE_DIR "include/isobus/utility")
 
 # Set source files
-set(UTILITY_SRC "system_timing.cpp" "processing_flags.cpp"
-                "iop_file_interface.cpp" "platform_endianness.cpp")
+set(UTILITY_SRC
+    "system_timing.cpp" "processing_flags.cpp" "iop_file_interface.cpp"
+    "platform_endianness.cpp" "chrono_time_source.cpp")
 
 # Prepend the source directory path to all the source files
 prepend(UTILITY_SRC ${UTILITY_SRC_DIR} ${UTILITY_SRC})
@@ -14,6 +15,8 @@ prepend(UTILITY_SRC ${UTILITY_SRC_DIR} ${UTILITY_SRC})
 # Set the include files
 set(UTILITY_INCLUDE
     "system_timing.hpp"
+    "chrono_time_source.hpp"
+    "time_source.hpp"
     "processing_flags.hpp"
     "iop_file_interface.hpp"
     "to_string.hpp"
@@ -37,6 +40,11 @@ set_target_properties(Utility PROPERTIES CXX_EXTENSIONS OFF)
 target_include_directories(
   Utility PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
                  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+
+if(CAN_STACK_DISABLE_THREADS)
+  target_include_directories(
+    Utility PRIVATE BEFORE $<BUILD_INTERFACE:${NO_STD_THREADS_DIR}>)
+endif()
 
 install(
   TARGETS Utility

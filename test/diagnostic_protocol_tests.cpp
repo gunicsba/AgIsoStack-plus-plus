@@ -7,10 +7,16 @@
 
 #include "helpers/control_function_helpers.hpp"
 #include "helpers/messaging_helpers.hpp"
+#include "helpers/test_fixture.hpp"
 
 using namespace isobus;
 
-TEST(DIAGNOSTIC_PROTOCOL_TESTS, CreateAndDestroyProtocolObjects)
+class DiagnosticProtocolTest : public AgIsoStackTestFixture
+{
+	// Wrapper to give tests a more meaningful name - no content.
+};
+
+TEST_F(DiagnosticProtocolTest, CreateAndDestroyProtocolObjects)
 {
 	NAME TestDeviceNAME(0);
 	auto TestInternalECU = CANNetworkManager::CANNetwork.create_internal_control_function(TestDeviceNAME, 0, 0x1C);
@@ -34,16 +40,16 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, CreateAndDestroyProtocolObjects)
 	CANNetworkManager::CANNetwork.deactivate_control_function(TestInternalECU);
 }
 
-TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
+TEST_F(DiagnosticProtocolTest, MessageEncoding)
 {
 	VirtualCANPlugin testPlugin;
 	testPlugin.open();
 
 	CANHardwareInterface::set_number_of_can_channels(1);
 	CANHardwareInterface::assign_can_channel_frame_handler(0, std::make_shared<VirtualCANPlugin>());
-	CANHardwareInterface::start();
+	CANHardwareInterface::start(false);
 
-	auto TestInternalECU = test_helpers::claim_internal_control_function(0xAA, 0);
+	auto TestInternalECU = test_helpers::claim_internal_control_function(0xAA, 0, time_source);
 	auto TestPartneredECU = test_helpers::force_claim_partnered_control_function(0xAB, 0);
 	DiagnosticProtocol protocolUnderTest(TestInternalECU, DiagnosticProtocol::NetworkType::SAEJ1939Network1PrimaryVehicleNetwork);
 
@@ -60,7 +66,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 	ASSERT_TRUE(testPlugin.get_queue_empty());
 
 	// Ready to run some tests
-	std::cerr << "These tests use BAM to transmit, so they may take several seconds.." << std::endl;
+	std::cerr << "These tests use TP CM to transmit." << std::endl;
 
 	{
 		// Test ECU ID format against J1939-71
@@ -81,30 +87,50 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.update();
 		protocolUnderTest.update();
 
+		// Simulate some time
+		time_source.update_for_ms(5);
+
 		// Make sure we're using ISO mode for this parsing to work
 		ASSERT_FALSE(protocolUnderTest.get_j1939_mode());
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
-		std::uint16_t expectedBAMLength = 56; // This is all strings lengths plus delimiters
+		std::uint16_t expectedLength = 56; // This is all strings lengths plus delimiters
 
-		// Broadcast Announce Message
+		// RTS Message
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CECFFAA, testFrame.identifier); // BAM from address AA
-		EXPECT_EQ(0x20, testFrame.data[0]); // BAM Multiplexer
-		EXPECT_EQ(expectedBAMLength & 0xFF, testFrame.data[1]); // Length LSB
-		EXPECT_EQ((expectedBAMLength >> 8) & 0xFF, testFrame.data[2]); // Length MSB
+		EXPECT_EQ(0x1CECABAA, testFrame.identifier); // TP CM from address AA
+		EXPECT_EQ(0x10, testFrame.data[0]); // RTS Multiplexer
+		EXPECT_EQ(expectedLength & 0xFF, testFrame.data[1]); // Length LSB
+		EXPECT_EQ((expectedLength >> 8) & 0xFF, testFrame.data[2]); // Length MSB
 		EXPECT_EQ(0x08, testFrame.data[3]); // Number of frames in session (based on length)
-		EXPECT_EQ(0xFF, testFrame.data[4]); // Always 0xFF
+		EXPECT_EQ(0x10, testFrame.data[4]); // Always 0xFF
 		EXPECT_EQ(0xC5, testFrame.data[5]); // PGN LSB
 		EXPECT_EQ(0xFD, testFrame.data[6]); // PGN
 		EXPECT_EQ(0x00, testFrame.data[7]); // PGN MSB
 
+		// Send CTS message
+		testFrame.dataLength = 8;
+		testFrame.identifier = test_helpers::create_ext_can_id(6, 0xEC00, TestInternalECU, TestPartneredECU);
+		testFrame.data[0] = 0x11; // CTS Multiplexer
+		testFrame.data[1] = 0x08; // Number of frames to send
+		testFrame.data[2] = 0x01;
+		testFrame.data[3] = 0xFF;
+		testFrame.data[4] = 0xFF;
+		testFrame.data[5] = 0xC5;
+		testFrame.data[6] = 0xFD;
+		testFrame.data[7] = 0x00;
+		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
+		CANNetworkManager::CANNetwork.update();
+		protocolUnderTest.update();
+
+		time_source.update_for_ms(5);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
-		// BAM Payload Frame 1
+		// CM DATA Payload Frame 1
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // DT from address AA
 		EXPECT_EQ(0x01, testFrame.data[0]); // Sequence 1
 		EXPECT_EQ('1', testFrame.data[1]); // Part Number index 0
 		EXPECT_EQ('2', testFrame.data[2]); // Part Number index 1
@@ -114,11 +140,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('9', testFrame.data[6]); // Serial number index 0
 		EXPECT_EQ('8', testFrame.data[7]); // Serial number index 1
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
-		// BAM Payload Frame 2
+		// CM DATA Payload Frame 2
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // DT from address AA
 		EXPECT_EQ(0x02, testFrame.data[0]); // Sequence 2
 		EXPECT_EQ('7', testFrame.data[1]); // Serial number index 2
 		EXPECT_EQ('6', testFrame.data[2]); // Serial number index 3
@@ -128,11 +156,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('e', testFrame.data[6]); // Location index 2
 		EXPECT_EQ(' ', testFrame.data[7]); // Location index 3
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
-		// BAM Payload Frame 3
+		// CM DATA Payload Frame 3
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // DT from address AA
 		EXPECT_EQ(0x03, testFrame.data[0]); // Sequence 3
 		EXPECT_EQ('I', testFrame.data[1]); // Location index 4
 		EXPECT_EQ('n', testFrame.data[2]); // Location index 5
@@ -142,11 +172,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('n', testFrame.data[6]); // Location index 9
 		EXPECT_EQ('e', testFrame.data[7]); // Location index 10
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
-		// BAM Payload Frame 4
+		// CM DATA Payload Frame 4
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // DT from address AA
 		EXPECT_EQ(0x04, testFrame.data[0]); // Sequence 4
 		EXPECT_EQ('t', testFrame.data[1]); // Location index 11
 		EXPECT_EQ('*', testFrame.data[2]); // Delimiter
@@ -156,11 +188,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('S', testFrame.data[6]); // Type Index 3
 		EXPECT_EQ('O', testFrame.data[7]); // Type Index 4
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
-		// BAM Payload Frame 5
+		// CM DATA Payload Frame 5
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // DT from address AA
 		EXPECT_EQ(0x05, testFrame.data[0]); // Sequence 5
 		EXPECT_EQ('S', testFrame.data[1]); // Type Index 5
 		EXPECT_EQ('t', testFrame.data[2]); // Type Index 6
@@ -170,11 +204,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('*', testFrame.data[6]); // Delimiter
 		EXPECT_EQ('N', testFrame.data[7]); // Manufacturer index 0
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
-		// BAM Payload Frame 6
+		// CM DATA Payload Frame 6
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // DT from address AA
 		EXPECT_EQ(0x06, testFrame.data[0]); // Sequence 6
 		EXPECT_EQ('o', testFrame.data[1]); // Manufacturer index 1
 		EXPECT_EQ('n', testFrame.data[2]); // Manufacturer index 2
@@ -184,11 +220,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('o', testFrame.data[6]); // Hardware ID Index 1
 		EXPECT_EQ('m', testFrame.data[7]); // Hardware ID Index 2
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
-		// BAM Payload Frame 7
+		// CM DATA Payload Frame 7
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // DT from address AA
 		EXPECT_EQ(0x07, testFrame.data[0]); // Sequence 7
 		EXPECT_EQ('e', testFrame.data[1]); // Hardware ID Index 3
 		EXPECT_EQ(' ', testFrame.data[2]); // Hardware ID Index 4
@@ -198,11 +236,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('d', testFrame.data[6]); // Hardware ID Index 8
 		EXPECT_EQ('w', testFrame.data[7]); // Hardware ID Index 9
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
-		// BAM Payload Frame 7
+		// CM DATA Payload Frame 8
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // DT from address AA
 		EXPECT_EQ(0x08, testFrame.data[0]); // Sequence 8
 		EXPECT_EQ('a', testFrame.data[1]); // Hardware ID Index 10
 		EXPECT_EQ('r', testFrame.data[2]); // Hardware ID Index 11
@@ -211,6 +251,21 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('I', testFrame.data[5]); // Hardware ID Index 14
 		EXPECT_EQ('D', testFrame.data[6]); // Hardware ID Index 15
 		EXPECT_EQ('*', testFrame.data[7]); // Delimiter (end of the message)
+
+		// Send EOM ACK
+		testFrame.dataLength = 8;
+		testFrame.identifier = test_helpers::create_ext_can_id(6, 0xEC00, TestInternalECU, TestPartneredECU);
+		testFrame.data[0] = 0x13; // EOM Multiplexer
+		testFrame.data[1] = expectedLength & 0xFF;
+		testFrame.data[2] = (expectedLength >> 8) & 0xFF;
+		testFrame.data[3] = 0x08; // Number of frames
+		testFrame.data[4] = 0xFF;
+		testFrame.data[5] = 0xC5;
+		testFrame.data[6] = 0xFD;
+		testFrame.data[7] = 0x00;
+		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
+		CANNetworkManager::CANNetwork.update();
+		protocolUnderTest.update();
 	}
 
 	{
@@ -231,6 +286,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		// Make sure we're using ISO mode for this parsing to work
 		ASSERT_TRUE(protocolUnderTest.get_j1939_mode());
 
+		time_source.update_for_ms(5);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// DM1 might be sent in j1939 mode, need to screen it out
@@ -239,19 +296,36 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 			EXPECT_TRUE(testPlugin.read_frame(testFrame));
 		}
 
-		std::uint16_t expectedBAMLength = 39; // This is all strings lengths plus delimiters
+		std::uint16_t expectedLength = 39; // This is all strings lengths plus delimiters
 
-		// Broadcast Announce Message
+		// RTS Message
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CECFFAA, testFrame.identifier); // BAM from address AA
-		EXPECT_EQ(0x20, testFrame.data[0]); // BAM Multiplexer
-		EXPECT_EQ(expectedBAMLength & 0xFF, testFrame.data[1]); // Length LSB
-		EXPECT_EQ((expectedBAMLength >> 8) & 0xFF, testFrame.data[2]); // Length MSB
+		EXPECT_EQ(0x1CECABAA, testFrame.identifier); // TP CM from address AA
+		EXPECT_EQ(0x10, testFrame.data[0]); // RTS Multiplexer
+		EXPECT_EQ(expectedLength & 0xFF, testFrame.data[1]); // Length LSB
+		EXPECT_EQ((expectedLength >> 8) & 0xFF, testFrame.data[2]); // Length MSB
 		EXPECT_EQ(0x06, testFrame.data[3]); // Number of frames in session (based on length)
-		EXPECT_EQ(0xFF, testFrame.data[4]); // Always 0xFF
+		EXPECT_EQ(0x10, testFrame.data[4]); // Always 0x10
 		EXPECT_EQ(0xC5, testFrame.data[5]); // PGN LSB
 		EXPECT_EQ(0xFD, testFrame.data[6]); // PGN
 		EXPECT_EQ(0x00, testFrame.data[7]); // PGN MSB
+
+		// Send CTS message
+		testFrame.dataLength = 8;
+		testFrame.identifier = test_helpers::create_ext_can_id(6, 0xEC00, TestInternalECU, TestPartneredECU);
+		testFrame.data[0] = 0x11; // CTS Multiplexer
+		testFrame.data[1] = 0x06; // Number of frames to send
+		testFrame.data[2] = 0x01;
+		testFrame.data[3] = 0xFF;
+		testFrame.data[4] = 0xFF;
+		testFrame.data[5] = 0xC5;
+		testFrame.data[6] = 0xFD;
+		testFrame.data[7] = 0x00;
+		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
+		CANNetworkManager::CANNetwork.update();
+		protocolUnderTest.update();
+
+		time_source.update_for_ms(5);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
@@ -263,7 +337,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 
 		// BAM Payload Frame 1
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x01, testFrame.data[0]); // Sequence 1
 		EXPECT_EQ('1', testFrame.data[1]); // Part Number index 0
 		EXPECT_EQ('2', testFrame.data[2]); // Part Number index 1
@@ -272,6 +346,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('*', testFrame.data[5]); // Delimiter
 		EXPECT_EQ('9', testFrame.data[6]); // Serial number index 0
 		EXPECT_EQ('8', testFrame.data[7]); // Serial number index 1
+
+		time_source.update_for_ms(51);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
@@ -283,7 +359,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 
 		// BAM Payload Frame 2
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x02, testFrame.data[0]); // Sequence 2
 		EXPECT_EQ('7', testFrame.data[1]); // Serial number index 2
 		EXPECT_EQ('6', testFrame.data[2]); // Serial number index 3
@@ -292,6 +368,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('h', testFrame.data[5]); // Location index 1
 		EXPECT_EQ('e', testFrame.data[6]); // Location index 2
 		EXPECT_EQ(' ', testFrame.data[7]); // Location index 3
+
+		time_source.update_for_ms(51);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
@@ -303,7 +381,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 
 		// BAM Payload Frame 3
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x03, testFrame.data[0]); // Sequence 3
 		EXPECT_EQ('I', testFrame.data[1]); // Location index 4
 		EXPECT_EQ('n', testFrame.data[2]); // Location index 5
@@ -312,6 +390,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('r', testFrame.data[5]); // Location index 8
 		EXPECT_EQ('n', testFrame.data[6]); // Location index 9
 		EXPECT_EQ('e', testFrame.data[7]); // Location index 10
+
+		time_source.update_for_ms(51);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
@@ -323,7 +403,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 
 		// BAM Payload Frame 4
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x04, testFrame.data[0]); // Sequence 4
 		EXPECT_EQ('t', testFrame.data[1]); // Location index 11
 		EXPECT_EQ('*', testFrame.data[2]); // Delimiter
@@ -332,6 +412,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('I', testFrame.data[5]); // Type Index 2
 		EXPECT_EQ('S', testFrame.data[6]); // Type Index 3
 		EXPECT_EQ('O', testFrame.data[7]); // Type Index 4
+
+		time_source.update_for_ms(51);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
@@ -343,7 +425,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 
 		// BAM Payload Frame 5
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x05, testFrame.data[0]); // Sequence 5
 		EXPECT_EQ('S', testFrame.data[1]); // Type Index 5
 		EXPECT_EQ('t', testFrame.data[2]); // Type Index 6
@@ -352,6 +434,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('k', testFrame.data[5]); // Type Index 9
 		EXPECT_EQ('*', testFrame.data[6]); // Delimiter
 		EXPECT_EQ('N', testFrame.data[7]); // Manufacturer index 0
+
+		time_source.update_for_ms(51);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
@@ -363,7 +447,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 
 		// BAM Payload Frame 6
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x06, testFrame.data[0]); // Sequence 6
 		EXPECT_EQ('o', testFrame.data[1]); // Manufacturer index 1
 		EXPECT_EQ('n', testFrame.data[2]); // Manufacturer index 2
@@ -373,8 +457,30 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ(0xFF, testFrame.data[6]); // Padding
 		EXPECT_EQ(0xFF, testFrame.data[7]); // Padding
 
+		// Send EOM ACK
+		testFrame.dataLength = 8;
+		testFrame.identifier = test_helpers::create_ext_can_id(6, 0xEC00, TestInternalECU, TestPartneredECU);
+		testFrame.data[0] = 0x13; // EOM Multiplexer
+		testFrame.data[1] = expectedLength & 0xFF;
+		testFrame.data[2] = (expectedLength >> 8) & 0xFF;
+		testFrame.data[3] = 0x06; // Number of frames
+		testFrame.data[4] = 0xFF;
+		testFrame.data[5] = 0xC5;
+		testFrame.data[6] = 0xFD;
+		testFrame.data[7] = 0x00;
+		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
+		CANNetworkManager::CANNetwork.update();
+		protocolUnderTest.update();
+
 		protocolUnderTest.set_j1939_mode(false);
 		EXPECT_FALSE(protocolUnderTest.get_j1939_mode());
+
+		// Clear any remaining DM1s
+		time_source.update_for_ms(101);
+		while (!testPlugin.get_queue_empty())
+		{
+			testPlugin.read_frame(testFrame);
+		}
 	}
 
 	{
@@ -393,27 +499,46 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 
 		protocolUnderTest.update();
 
+		time_source.update_for_ms(5);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
-		std::uint16_t expectedBAMLength = 40; // This is all strings lengths plus delimiters
+		std::uint16_t expectedLength = 40; // This is all strings lengths plus delimiters
 
-		// Broadcast Announce Message
+		// RTS Message
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CECFFAA, testFrame.identifier); // BAM from address AA
-		EXPECT_EQ(0x20, testFrame.data[0]); // BAM Multiplexer
-		EXPECT_EQ(expectedBAMLength & 0xFF, testFrame.data[1]); // Length LSB
-		EXPECT_EQ((expectedBAMLength >> 8) & 0xFF, testFrame.data[2]); // Length MSB
+		EXPECT_EQ(0x1CECABAA, testFrame.identifier); // TP CM from address AA
+		EXPECT_EQ(0x10, testFrame.data[0]); // RTS Multiplexer
+		EXPECT_EQ(expectedLength & 0xFF, testFrame.data[1]); // Length LSB
+		EXPECT_EQ((expectedLength >> 8) & 0xFF, testFrame.data[2]); // Length MSB
 		EXPECT_EQ(0x06, testFrame.data[3]); // Number of frames in session (based on length)
-		EXPECT_EQ(0xFF, testFrame.data[4]); // Always 0xFF
+		EXPECT_EQ(0x10, testFrame.data[4]); // Always 0x10
 		EXPECT_EQ(0xDA, testFrame.data[5]); // PGN LSB
 		EXPECT_EQ(0xFE, testFrame.data[6]); // PGN
 		EXPECT_EQ(0x00, testFrame.data[7]); // PGN MSB
+
+		// Send CTS message
+		testFrame.dataLength = 8;
+		testFrame.identifier = test_helpers::create_ext_can_id(6, 0xEC00, TestInternalECU, TestPartneredECU);
+		testFrame.data[0] = 0x11; // CTS Multiplexer
+		testFrame.data[1] = 0x06; // Number of frames to send
+		testFrame.data[2] = 0x01;
+		testFrame.data[3] = 0xFF;
+		testFrame.data[4] = 0xFF;
+		testFrame.data[5] = 0xDA;
+		testFrame.data[6] = 0xFE;
+		testFrame.data[7] = 0x00;
+		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
+		CANNetworkManager::CANNetwork.update();
+		protocolUnderTest.update();
+
+		time_source.update_for_ms(5);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 1
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x01, testFrame.data[0]); // Sequence 1
 		EXPECT_EQ('U', testFrame.data[1]); // Version 0, index 0
 		EXPECT_EQ('n', testFrame.data[2]); // Version 0, index 1
@@ -423,11 +548,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('T', testFrame.data[6]); // Version 0, index 5
 		EXPECT_EQ('e', testFrame.data[7]); // Version 0, index 6
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 2
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x02, testFrame.data[0]); // Sequence 2
 		EXPECT_EQ('s', testFrame.data[1]); // Version 0, index 7
 		EXPECT_EQ('t', testFrame.data[2]); // Version 0, index 8
@@ -437,11 +564,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('0', testFrame.data[6]); // Version 0, index 12
 		EXPECT_EQ('.', testFrame.data[7]); // Version 0, index 13
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 3
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x03, testFrame.data[0]); // Sequence 3
 		EXPECT_EQ('0', testFrame.data[1]); // Version 0, index 7
 		EXPECT_EQ('*', testFrame.data[2]); // Delimiter
@@ -451,11 +580,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('t', testFrame.data[6]); // Version 1, index 3
 		EXPECT_EQ('h', testFrame.data[7]); // Version 1, index 4
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 4
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x04, testFrame.data[0]); // Sequence 4
 		EXPECT_EQ('e', testFrame.data[1]); // Version 0, index 7
 		EXPECT_EQ('r', testFrame.data[2]); // Delimiter
@@ -465,11 +596,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('r', testFrame.data[6]); // Version 1, index 8
 		EXPECT_EQ('s', testFrame.data[7]); // Version 1, index 9
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 5
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x05, testFrame.data[0]); // Sequence 5
 		EXPECT_EQ('i', testFrame.data[1]); // Version 0, index 7
 		EXPECT_EQ('o', testFrame.data[2]); // Delimiter
@@ -479,11 +612,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('.', testFrame.data[6]); // Version 1, index 8
 		EXPECT_EQ('x', testFrame.data[7]); // Version 1, index 9
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 6
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x06, testFrame.data[0]); // Sequence 6
 		EXPECT_EQ('.', testFrame.data[1]); // Version 0, index 10
 		EXPECT_EQ('x', testFrame.data[2]); // Version 0, index 11
@@ -492,6 +627,21 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('*', testFrame.data[5]); // Delimiter
 		EXPECT_EQ(0xFF, testFrame.data[6]); // Padding
 		EXPECT_EQ(0xFF, testFrame.data[7]); // Padding
+
+		// Send EOM ACK
+		testFrame.dataLength = 8;
+		testFrame.identifier = test_helpers::create_ext_can_id(6, 0xEC00, TestInternalECU, TestPartneredECU);
+		testFrame.data[0] = 0x13; // EOM Multiplexer
+		testFrame.data[1] = expectedLength & 0xFF;
+		testFrame.data[2] = (expectedLength >> 8) & 0xFF;
+		testFrame.data[3] = 0x06; // Number of frames
+		testFrame.data[4] = 0xFF;
+		testFrame.data[5] = 0xDA;
+		testFrame.data[6] = 0xFE;
+		testFrame.data[7] = 0x00;
+		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
+		CANNetworkManager::CANNetwork.update();
+		protocolUnderTest.update();
 	}
 
 	{
@@ -506,6 +656,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.update();
 
 		protocolUnderTest.update();
+
+		time_source.update_for_ms(5);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
@@ -537,28 +689,46 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 
 		protocolUnderTest.update();
 
+		time_source.update_for_ms(5);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
-		// More manual BAM parsing...
-		std::uint16_t expectedBAMLength = 44; // This is all strings lengths plus delimiters
+		std::uint16_t expectedLength = 44; // This is all strings lengths plus delimiters
 
-		// Broadcast Announce Message
+		// RTS Message
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CECFFAA, testFrame.identifier); // BAM from address AA
-		EXPECT_EQ(0x20, testFrame.data[0]); // BAM Multiplexer
-		EXPECT_EQ(expectedBAMLength & 0xFF, testFrame.data[1]); // Length LSB
-		EXPECT_EQ((expectedBAMLength >> 8) & 0xFF, testFrame.data[2]); // Length MSB
+		EXPECT_EQ(0x1CECABAA, testFrame.identifier); // TP CM from address AA
+		EXPECT_EQ(0x10, testFrame.data[0]); // RTS Multiplexer
+		EXPECT_EQ(expectedLength & 0xFF, testFrame.data[1]); // Length LSB
+		EXPECT_EQ((expectedLength >> 8) & 0xFF, testFrame.data[2]); // Length MSB
 		EXPECT_EQ(0x07, testFrame.data[3]); // Number of frames in session (based on length)
-		EXPECT_EQ(0xFF, testFrame.data[4]); // Always 0xFF
+		EXPECT_EQ(0x10, testFrame.data[4]); // Always 0x10
 		EXPECT_EQ(0x8D, testFrame.data[5]); // PGN LSB
 		EXPECT_EQ(0xFC, testFrame.data[6]); // PGN
 		EXPECT_EQ(0x00, testFrame.data[7]); // PGN MSB
+
+		// Send CTS message
+		testFrame.dataLength = 8;
+		testFrame.identifier = test_helpers::create_ext_can_id(6, 0xEC00, TestInternalECU, TestPartneredECU);
+		testFrame.data[0] = 0x11; // CTS Multiplexer
+		testFrame.data[1] = 0x07; // Number of frames to send
+		testFrame.data[2] = 0x01;
+		testFrame.data[3] = 0xFF;
+		testFrame.data[4] = 0xFF;
+		testFrame.data[5] = 0x8D;
+		testFrame.data[6] = 0xFC;
+		testFrame.data[7] = 0x00;
+		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
+		CANNetworkManager::CANNetwork.update();
+		protocolUnderTest.update();
+
+		time_source.update_for_ms(5);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 1
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x01, testFrame.data[0]); // Sequence 1
 		EXPECT_EQ('1', testFrame.data[1]); // ID Code index 0
 		EXPECT_EQ('2', testFrame.data[2]); // ID Code index 1
@@ -568,11 +738,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('6', testFrame.data[6]); // ID Code index 5
 		EXPECT_EQ('7', testFrame.data[7]); // ID Code index 6
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 2
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x02, testFrame.data[0]); // Sequence 2
 		EXPECT_EQ('8', testFrame.data[1]); // ID Code index 7
 		EXPECT_EQ('9', testFrame.data[2]); // ID Code index 8
@@ -582,11 +754,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('C', testFrame.data[6]); // ID Code index 12
 		EXPECT_EQ('*', testFrame.data[7]); // Delimiter
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 3
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x03, testFrame.data[0]); // Sequence 3
 		EXPECT_EQ('O', testFrame.data[1]); // Brand index 0
 		EXPECT_EQ('p', testFrame.data[2]); // Brand index 1
@@ -596,11 +770,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('A', testFrame.data[6]); // Brand index 5
 		EXPECT_EQ('g', testFrame.data[7]); // Brand index 6
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 4
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x04, testFrame.data[0]); // Sequence 4
 		EXPECT_EQ('r', testFrame.data[1]); // Brand index 7
 		EXPECT_EQ('i', testFrame.data[2]); // Brand index 8
@@ -610,11 +786,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('t', testFrame.data[6]); // Brand index 12
 		EXPECT_EQ('u', testFrame.data[7]); // Brand index 13
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 5
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x05, testFrame.data[0]); // Sequence 5
 		EXPECT_EQ('r', testFrame.data[1]); // Brand index 14
 		EXPECT_EQ('e', testFrame.data[2]); // Brand index 15
@@ -624,11 +802,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('I', testFrame.data[6]); // Model index 2
 		EXPECT_EQ('s', testFrame.data[7]); // Model index 3
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 6
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x06, testFrame.data[0]); // Sequence 6
 		EXPECT_EQ('o', testFrame.data[1]); // Model index 4
 		EXPECT_EQ('S', testFrame.data[2]); // Model index 5
@@ -638,11 +818,13 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ('k', testFrame.data[6]); // Model index 9
 		EXPECT_EQ('+', testFrame.data[7]); // Model index 10
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 7
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
-		EXPECT_EQ(0x1CEBFFAA, testFrame.identifier); // BAM from address AA
+		EXPECT_EQ(0x1CEBABAA, testFrame.identifier); // BAM from address AA
 		EXPECT_EQ(0x07, testFrame.data[0]); // Sequence 7
 		EXPECT_EQ('+', testFrame.data[1]); // Model index 11
 		EXPECT_EQ('*', testFrame.data[2]); // Delimiter
@@ -651,6 +833,21 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ(0xFF, testFrame.data[5]); // Padding
 		EXPECT_EQ(0xFF, testFrame.data[6]); // Padding
 		EXPECT_EQ(0xFF, testFrame.data[7]); // Padding
+
+		// Send EOM ACK
+		testFrame.dataLength = 8;
+		testFrame.identifier = test_helpers::create_ext_can_id(6, 0xEC00, TestInternalECU, TestPartneredECU);
+		testFrame.data[0] = 0x13; // EOM Multiplexer
+		testFrame.data[1] = expectedLength & 0xFF;
+		testFrame.data[2] = (expectedLength >> 8) & 0xFF;
+		testFrame.data[3] = 0x07; // Number of frames
+		testFrame.data[4] = 0xFF;
+		testFrame.data[5] = 0x8D;
+		testFrame.data[6] = 0xFC;
+		testFrame.data[7] = 0x00;
+		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
+		CANNetworkManager::CANNetwork.update();
+		protocolUnderTest.update();
 	}
 
 	// Make a few test DTCs
@@ -672,6 +869,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.update();
 
 		protocolUnderTest.update();
+
+		time_source.update_for_ms(5);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
@@ -699,6 +898,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
 		CANNetworkManager::CANNetwork.update();
 		protocolUnderTest.update();
+
+		time_source.update_for_ms(5);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
@@ -730,6 +931,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 
 		std::uint16_t expectedBAMLength = 14; // This is 2 + 4 * number of DTCs
 
+		time_source.update_for_ms(5);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// Broadcast Announce Message
@@ -744,6 +947,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ(0xFE, testFrame.data[6]); // PGN
 		EXPECT_EQ(0x00, testFrame.data[7]); // PGN MSB
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 1
@@ -757,6 +962,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ(31, testFrame.data[5]); // FMI 1
 		EXPECT_EQ(1, testFrame.data[6]); // Count 1
 		EXPECT_EQ(0x37, testFrame.data[7]); // SPN2
+
+		time_source.update_for_ms(51);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
@@ -788,6 +995,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.update();
 		protocolUnderTest.update();
 
+		time_source.update_for_ms(5);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 		std::uint16_t expectedBAMLength = 14; // This is 2 + 4 * number of DTCs
 
@@ -803,6 +1012,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ(0xFE, testFrame.data[6]); // PGN
 		EXPECT_EQ(0x00, testFrame.data[7]); // PGN MSB
 
+		time_source.update_for_ms(51);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// BAM Payload Frame 1
@@ -816,6 +1027,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_EQ(31, testFrame.data[5]); // FMI 1
 		EXPECT_EQ(1, testFrame.data[6]); // Count 1
 		EXPECT_EQ(0x37, testFrame.data[7]); // SPN2
+
+		time_source.update_for_ms(51);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
@@ -842,6 +1055,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
 		CANNetworkManager::CANNetwork.update();
 		protocolUnderTest.update();
+
+		time_source.update_for_ms(5);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
@@ -871,6 +1086,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.update();
 		protocolUnderTest.update();
 
+		time_source.update_for_ms(5);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
@@ -893,6 +1110,8 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_TRUE(protocolUnderTest.get_broadcast_state());
 		EXPECT_TRUE(protocolUnderTest.suspend_broadcasts(5));
 
+		time_source.update_for_ms(5);
+
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		// When we are announcing a suspension, we're supposed to set
@@ -911,7 +1130,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		EXPECT_FALSE(protocolUnderTest.get_broadcast_state());
 
 		// Wait suspension to be lifted
-		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		time_source.update_for_ms(10);
 		protocolUnderTest.update();
 		EXPECT_TRUE(protocolUnderTest.get_broadcast_state());
 
@@ -983,6 +1202,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		protocolUnderTest.set_diagnostic_trouble_code_active(testDTC1, true);
 		protocolUnderTest.set_diagnostic_trouble_code_active(testDTC2, true);
 		protocolUnderTest.update();
+		time_source.update_for_ms(5);
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 
 		testFrame.dataLength = 8;
@@ -998,6 +1218,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
 		CANNetworkManager::CANNetwork.update();
 		protocolUnderTest.update();
+		time_source.update_for_ms(5);
 
 		// Check for a positive acknowledge that the DTC was cleared
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
@@ -1026,6 +1247,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
 		CANNetworkManager::CANNetwork.update();
 		protocolUnderTest.update();
+		time_source.update_for_ms(5);
 
 		// Check for a negative acknowledge that the DTC was cleared
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
@@ -1054,6 +1276,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
 		CANNetworkManager::CANNetwork.update();
 		protocolUnderTest.update();
+		time_source.update_for_ms(5);
 
 		// Check for a positive acknowledge that the DTC was cleared
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
@@ -1082,6 +1305,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
 		CANNetworkManager::CANNetwork.update();
 		protocolUnderTest.update();
+		time_source.update_for_ms(5);
 
 		// Check for a negative acknowledge that the DTC was cleared
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
@@ -1112,6 +1336,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
 		CANNetworkManager::CANNetwork.update();
 		protocolUnderTest.update();
+		time_source.update_for_ms(5);
 
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
@@ -1155,6 +1380,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.update();
 
 		protocolUnderTest.update();
+		time_source.update_for_ms(5);
 
 		// The stack will have sent an ACK since we sent it as destination specific
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
@@ -1209,6 +1435,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
 		CANNetworkManager::CANNetwork.update();
 		protocolUnderTest.update();
+		time_source.update_for_ms(5);
 
 		// The stack will have sent an ACK since we sent it as destination specific
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));
@@ -1239,6 +1466,7 @@ TEST(DIAGNOSTIC_PROTOCOL_TESTS, MessageEncoding)
 		CANNetworkManager::CANNetwork.process_receive_can_message_frame(testFrame);
 		CANNetworkManager::CANNetwork.update();
 		protocolUnderTest.update();
+		time_source.update_for_ms(5);
 
 		// Parse DM2 response
 		EXPECT_TRUE(testPlugin.read_frame(testFrame));

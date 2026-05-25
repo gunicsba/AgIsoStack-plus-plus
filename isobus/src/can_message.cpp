@@ -20,13 +20,15 @@ namespace isobus
 	                       std::uint32_t length,
 	                       std::shared_ptr<ControlFunction> source,
 	                       std::shared_ptr<ControlFunction> destination,
-	                       std::uint8_t CANPort) :
+	                       std::uint8_t CANPort,
+	                       std::uint64_t timestamp_us) :
 	  messageType(type),
 	  identifier(identifier),
 	  data(dataBuffer, dataBuffer + length),
 	  source(source),
 	  destination(destination),
-	  CANPortIndex(CANPort)
+	  CANPortIndex(CANPort),
+	  timestamp_us(timestamp_us)
 	{
 	}
 
@@ -35,19 +37,16 @@ namespace isobus
 	                       std::vector<std::uint8_t> data,
 	                       std::shared_ptr<ControlFunction> source,
 	                       std::shared_ptr<ControlFunction> destination,
-	                       std::uint8_t CANPort) :
+	                       std::uint8_t CANPort,
+	                       std::uint64_t timestamp_us) :
 	  messageType(type),
 	  identifier(identifier),
 	  data(std::move(data)),
 	  source(source),
 	  destination(destination),
-	  CANPortIndex(CANPort)
+	  CANPortIndex(CANPort),
+	  timestamp_us(timestamp_us)
 	{
-	}
-
-	CANMessage CANMessage::create_invalid_message()
-	{
-		return CANMessage(CANMessage::Type::Receive, CANIdentifier(CANIdentifier::UNDEFINED_PARAMETER_GROUP_NUMBER), {}, nullptr, nullptr, 0);
 	}
 
 	CANMessage::Type CANMessage::get_type() const
@@ -118,6 +117,11 @@ namespace isobus
 	std::uint8_t CANMessage::get_can_port_index() const
 	{
 		return CANPortIndex;
+	}
+
+	std::uint64_t CANMessage::get_timestamp_us() const
+	{
+		return timestamp_us;
 	}
 
 	void CANMessage::set_data(const std::uint8_t *dataBuffer, std::uint32_t length)
@@ -198,7 +202,7 @@ namespace isobus
 		}
 		else
 		{
-			retVal = static_cast<std::uint32_t>(data.at(index + 2)) << 16;
+			retVal = static_cast<std::uint32_t>(data.at(index)) << 16;
 			retVal |= static_cast<std::uint32_t>(data.at(index + 1)) << 8;
 			retVal |= data.at(index + 2);
 		}
@@ -216,7 +220,7 @@ namespace isobus
 		}
 		else
 		{
-			retVal = static_cast<std::int32_t>(data.at(index + 2)) << 16;
+			retVal = static_cast<std::int32_t>(data.at(index)) << 16;
 			retVal |= static_cast<std::int32_t>(data.at(index + 1)) << 8;
 			retVal |= static_cast<std::int32_t>(data.at(index + 2));
 		}
@@ -349,22 +353,22 @@ namespace isobus
 			auto bit = (data.at(byteIndex) >> (indexOfFinalByteBit - bitIndexWithinByte)) & 1;
 			if (length - bitCounter < 8)
 			{
-				currentByte |= static_cast<uint8_t>(bit) << (length - 1 - bitCounter);
+				currentByte |= static_cast<std::uint8_t>(bit) << (length - 1 - bitCounter);
 			}
 			else
 			{
-				currentByte |= static_cast<uint8_t>(bit) << (indexOfFinalByteBit - bitIndexWithinByte);
+				currentByte |= static_cast<std::uint8_t>(bit) << (indexOfFinalByteBit - bitIndexWithinByte);
 			}
 
 			if ((bitCounter + 1) % 8 == 0 || i == endBitIndex)
 			{
 				if (ByteFormat::LittleEndian == format)
 				{
-					retVal |= (static_cast<uint64_t>(currentByte) << (startAmountOfBytes - amountOfBytesLeft) * 8);
+					retVal |= (static_cast<std::uint64_t>(currentByte) << (startAmountOfBytes - amountOfBytesLeft) * 8);
 				}
 				else
 				{
-					retVal |= (static_cast<uint64_t>(currentByte) << ((amountOfBytesLeft * 8) - 8));
+					retVal |= (static_cast<std::uint64_t>(currentByte) << ((amountOfBytesLeft * 8) - 8));
 				}
 				currentByte = 0;
 				amountOfBytesLeft--;

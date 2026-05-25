@@ -104,6 +104,10 @@ if("NTCAN" IN_LIST CAN_DRIVER)
   list(APPEND HARDWARE_INTEGRATION_SRC "ntcan_plugin.cpp")
   list(APPEND HARDWARE_INTEGRATION_INCLUDE "ntcan_plugin.hpp")
 endif()
+if("SILKit" IN_LIST CAN_DRIVER)
+  list(APPEND HARDWARE_INTEGRATION_SRC "sil_kit_plugin.cpp")
+  list(APPEND HARDWARE_INTEGRATION_INCLUDE "sil_kit_plugin.hpp")
+endif()
 
 # Prepend the source directory path to all the source files
 prepend(HARDWARE_INTEGRATION_SRC ${HARDWARE_INTEGRATION_SRC_DIR}
@@ -352,6 +356,11 @@ if("NTCAN" IN_LIST CAN_DRIVER)
   endif()
 endif()
 
+if("SILKit" IN_LIST CAN_DRIVER)
+  find_package(SilKit REQUIRED)
+  target_link_libraries(HardwareIntegration PUBLIC SilKit::SilKit)
+endif()
+
 # Mark the compiled CAN drivers available to other modules. In the form:
 # `ISOBUS_<uppercase CAN_DRIVER>_AVAILABLE` as a preprocessor definition.
 foreach(available_driver ${CAN_DRIVER})
@@ -368,6 +377,10 @@ target_include_directories(
   HardwareIntegration
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+if(CAN_STACK_DISABLE_THREADS)
+  target_include_directories(
+    HardwareIntegration PRIVATE BEFORE $<BUILD_INTERFACE:${NO_STD_THREADS_DIR}>)
+endif()
 
 install(
   TARGETS HardwareIntegration
