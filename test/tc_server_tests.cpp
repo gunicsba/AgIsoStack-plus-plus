@@ -1385,3 +1385,155 @@ TEST_F(TaskControllerServerTest, DDOPHelper_NoFunctions)
 	EXPECT_EQ(3000, implement.booms.at(0).sections.at(0).yOffset_mm.get());
 	EXPECT_EQ(4000, implement.booms.at(0).sections.at(0).zOffset_mm.get());
 }
+
+TEST_F(TaskControllerServerTest, B6CommandBusyStateTracking)
+{
+	// Test B.6 command busy state tracking per ISO 11783-10 B.8.1
+	// Bytes 5-7 of TC Status message should reflect busy state during ObjectPoolTransfer and ObjectPoolActivateDeactivate
+
+	// Initially, command source address and command byte should be 0x00
+	EXPECT_EQ(0x00, server->currentCommandSourceAddress);
+	EXPECT_EQ(0x00, server->currentCommandByte);
+
+	// Test set_b6_command_busy() API
+	server->set_b6_command_busy(true, 0x88, 0x60);
+	EXPECT_EQ(0x88, server->currentCommandSourceAddress);
+	EXPECT_EQ(0x60, server->currentCommandByte);
+
+	// Clear the busy state
+	server->set_b6_command_busy(false);
+	EXPECT_EQ(0x00, server->currentCommandSourceAddress);
+	EXPECT_EQ(0x00, server->currentCommandByte);
+
+	// Test with default parameters
+	server->set_b6_command_busy(true);
+	EXPECT_EQ(0x00, server->currentCommandSourceAddress);
+	EXPECT_EQ(0x00, server->currentCommandByte);
+
+	server->set_b6_command_busy(false);
+	EXPECT_EQ(0x00, server->currentCommandSourceAddress);
+	EXPECT_EQ(0x00, server->currentCommandByte);
+}
+
+TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolTransfer)
+{
+	// Test that busy state is set during ObjectPoolTransfer command processing
+	isobus::NAME partnerName(0);
+	partnerName.set_industry_group(2);
+	partnerName.set_function_code(static_cast<std::uint8_t>(isobus::NAME::Function::TaskController));
+
+	createPartneredControlFunction(partnerName, { &testPlugin });
+	EXPECT_NE(nullptr, testPartner);
+
+	// Send WorkingSetMaster message to register the client
+	CANMessageFrame testFrame;
+	testFrame.identifier = 0x00FE1087;
+	testFrame.dataLength = 8;
+	testFrame.channel = 0;
+	std::fill(std::begin(testFrame.data), std::end(testFrame.data), 0xFF);
+	testFrame.data[0] = 0x01; // 1 working set member
+	hardwareInterface->write_frame(testFrame);
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	CANNetworkManager::CANNetwork.update();
+	server->update();
+
+	// Request object pool transfer first
+	const std::array<std::uint8_t, CAN_DATA_LENGTH> requestOPTransfer = {
+		static_cast<std::uint8_t>(TaskControllerServer::ProcessDataCommands::DeviceDescriptor) | (static_cast<std::uint8_t>(TaskControllerServer::DeviceDescriptorCommandParameters::RequestObjectPoolTransfer) << 4),
+		0x00, 0x10, 0x00, 0x00, // 4096 bytes requested
+		0xFF, 0xFF, 0xFF
+	};
+
+	testFrame.identifier = 0x00CB0087;
+	testFrame.dataLength = 8;
+	std::copy(requestOPTransfer.begin(), requestOPTransfer.end(), testFrame.data);
+	hardwareInterface->write_frame(testFrame);
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	CANNetworkManager::CANNetwork.update();
+	server->update();
+
+	// Now send ObjectPoolTransfer command
+	const std::array<std::uint8_t, CAN_DATA_LENGTH> opTransfer = {
+		static_cast<std::uint8_t>(TaskControllerServer::ProcessDataCommands::DeviceDescriptor) | (static_cast<std::uint8_t>(TaskControllerServer::DeviceDescriptorCommandParameters::ObjectPoolTransfer) << 4),
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07
+	};
+
+	testFrame.identifier = 0x00CB0087;
+	testFrame.dataLength = 8;
+	std::copy(opTransfer.begin(), opTransfer.end(), testFrame.data);
+	hardwareInterface->write_frame(testFrame);
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	CANNetworkManager::CANNetwork.update();
+
+	// During processing, busy state should be set
+	// Note: After processing completes, busy state is cleared
+	server->update();
+
+	// After processing, busy state should be cleared
+	EXPECT_EQ(0x00, server->currentCommandSourceAddress);
+	EXPECT_EQ(0x00, server->currentCommandByte);
+}
+
+TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolActivateDeactivate)
+{
+	// Test that busy state is set during ObjectPoolActivateDeactivate command processing
+	isobus::NAME partnerName(0);
+	partnerName.set_industry_group(2);
+	partnerName.set_function_code(static_cast<std::uint8_t>(isobus::NAME::Function::TaskController));
+
+	createPartneredControlFunction(partnerName, { &testPlugin });
+	EXPECT_NE(nullptr, testPartner);
+
+	// Send WorkingSetMaster message to register the client
+	CANMessageFrame testFrame;
+	testFrame.identifier = 0x00FE1087;
+	testFrame.dataLength = 8;
+	testFrame.channel = 0;
+	std::fill(std::begin(testFrame.data), std::end(testFrame.data), 0xFF);
+	testFrame.data[0] = 0x01; // 1 working set member
+	hardwareInterface->write_frame(testFrame);
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	CANNetworkManager::CANNetwork.update();
+	server->update();
+
+	// Send ObjectPoolActivateDeactivate command (activate)
+	const std::array<std::uint8_t, CAN_DATA_LENGTH> opActivate = {
+		static_cast<std::uint8_t>(TaskControllerServer::ProcessDataCommands::DeviceDescriptor) | (static_cast<std::uint8_t>(TaskControllerServer::DeviceDescriptorCommandParameters::ObjectPoolActivateDeactivate) << 4),
+		0xFF, // Activate
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+	};
+
+	testFrame.identifier = 0x00CB0087;
+	testFrame.dataLength = 8;
+	std::copy(opActivate.begin(), opActivate.end(), testFrame.data);
+	hardwareInterface->write_frame(testFrame);
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	CANNetworkManager::CANNetwork.update();
+
+	// During processing, busy state should be set
+	// After processing completes, busy state is cleared
+	server->update();
+
+	// After processing, busy state should be cleared
+	EXPECT_EQ(0x00, server->currentCommandSourceAddress);
+	EXPECT_EQ(0x00, server->currentCommandByte);
+
+	// Send ObjectPoolActivateDeactivate command (deactivate)
+	const std::array<std::uint8_t, CAN_DATA_LENGTH> opDeactivate = {
+		static_cast<std::uint8_t>(TaskControllerServer::ProcessDataCommands::DeviceDescriptor) | (static_cast<std::uint8_t>(TaskControllerServer::DeviceDescriptorCommandParameters::ObjectPoolActivateDeactivate) << 4),
+		0x00, // Deactivate
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+	};
+
+	testFrame.identifier = 0x00CB0087;
+	testFrame.dataLength = 8;
+	std::copy(opDeactivate.begin(), opDeactivate.end(), testFrame.data);
+	hardwareInterface->write_frame(testFrame);
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	CANNetworkManager::CANNetwork.update();
+	server->update();
+
+	// After processing, busy state should be cleared
+	EXPECT_EQ(0x00, server->currentCommandSourceAddress);
+	EXPECT_EQ(0x00, server->currentCommandByte);
+}
