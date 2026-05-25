@@ -1440,8 +1440,13 @@ TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolTransfer)
 	// Request object pool transfer first
 	const std::array<std::uint8_t, CAN_DATA_LENGTH> requestOPTransfer = {
 		static_cast<std::uint8_t>(TaskControllerServer::ProcessDataCommands::DeviceDescriptor) | (static_cast<std::uint8_t>(TaskControllerServer::DeviceDescriptorCommandParameters::RequestObjectPoolTransfer) << 4),
-		0x00, 0x10, 0x00, 0x00, // 4096 bytes requested
-		0xFF, 0xFF, 0xFF
+		0x00,
+		0x10,
+		0x00,
+		0x00, // 4096 bytes requested
+		0xFF,
+		0xFF,
+		0xFF
 	};
 
 	testFrame.identifier = 0x00CB0087;
@@ -1455,7 +1460,13 @@ TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolTransfer)
 	// Now send ObjectPoolTransfer command
 	const std::array<std::uint8_t, CAN_DATA_LENGTH> opTransfer = {
 		static_cast<std::uint8_t>(TaskControllerServer::ProcessDataCommands::DeviceDescriptor) | (static_cast<std::uint8_t>(TaskControllerServer::DeviceDescriptorCommandParameters::ObjectPoolTransfer) << 4),
-		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07
+		0x01,
+		0x02,
+		0x03,
+		0x04,
+		0x05,
+		0x06,
+		0x07
 	};
 
 	testFrame.identifier = 0x00CB0087;
@@ -1500,7 +1511,12 @@ TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolActivateDeactivate
 	const std::array<std::uint8_t, CAN_DATA_LENGTH> opActivate = {
 		static_cast<std::uint8_t>(TaskControllerServer::ProcessDataCommands::DeviceDescriptor) | (static_cast<std::uint8_t>(TaskControllerServer::DeviceDescriptorCommandParameters::ObjectPoolActivateDeactivate) << 4),
 		0xFF, // Activate
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+		0xFF,
+		0xFF,
+		0xFF,
+		0xFF,
+		0xFF,
+		0xFF
 	};
 
 	testFrame.identifier = 0x00CB0087;
@@ -1522,7 +1538,12 @@ TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolActivateDeactivate
 	const std::array<std::uint8_t, CAN_DATA_LENGTH> opDeactivate = {
 		static_cast<std::uint8_t>(TaskControllerServer::ProcessDataCommands::DeviceDescriptor) | (static_cast<std::uint8_t>(TaskControllerServer::DeviceDescriptorCommandParameters::ObjectPoolActivateDeactivate) << 4),
 		0x00, // Deactivate
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+		0xFF,
+		0xFF,
+		0xFF,
+		0xFF,
+		0xFF,
+		0xFF
 	};
 
 	testFrame.identifier = 0x00CB0087;
