@@ -367,6 +367,9 @@ namespace isobus
 		std::condition_variable &get_condition_variable();
 #endif
 
+		// Grant test class access to protected members for verification
+		friend class TaskControllerServerTest;
+
 		// **** Functions used to initialize and run the server ****
 
 		/// @brief Initializes the task controller server.
