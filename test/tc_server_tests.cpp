@@ -1166,9 +1166,9 @@ TEST_F(TaskControllerServerTest, MessageEncoding)
 		EXPECT_EQ(0xFF, testFrame.data[2]);
 		EXPECT_EQ(0xFF, testFrame.data[3]);
 		EXPECT_EQ(0x01, testFrame.data[4]); // Task active bit
-		EXPECT_EQ(0xFE, testFrame.data[5]); // Address of client with executing command
+		EXPECT_EQ(0x00, testFrame.data[5]); // Address of client with executing command (0x00 = not busy)
 		EXPECT_EQ(0x00, testFrame.data[6]); // Executing command
-		EXPECT_EQ(0xFF, testFrame.data[7]); // Address of client with executing command
+		EXPECT_EQ(0xFF, testFrame.data[7]); // Reserved
 
 		// Disable task active
 		server.set_task_totals_active(false);
@@ -1182,9 +1182,9 @@ TEST_F(TaskControllerServerTest, MessageEncoding)
 		EXPECT_EQ(0xFF, testFrame.data[2]);
 		EXPECT_EQ(0xFF, testFrame.data[3]);
 		EXPECT_EQ(0x00, testFrame.data[4]); // Task active bit
-		EXPECT_EQ(0xFE, testFrame.data[5]); // Address of client with executing command
+		EXPECT_EQ(0x00, testFrame.data[5]); // Address of client with executing command (0x00 = not busy)
 		EXPECT_EQ(0x00, testFrame.data[6]); // Executing command
-		EXPECT_EQ(0xFF, testFrame.data[7]); // Address of client with executing command
+		EXPECT_EQ(0xFF, testFrame.data[7]); // Reserved
 	}
 	CANHardwareInterface::stop();
 }
@@ -1413,28 +1413,68 @@ TEST_F(TaskControllerServerTest, B6CommandBusyStateTracking)
 	// Test B.6 command busy state tracking per ISO 11783-10 B.8.1
 	// Bytes 5-7 of TC Status message should reflect busy state during ObjectPoolTransfer and ObjectPoolActivateDeactivate
 
+	CANMessageFrame testFrame;
+
 	// Initially, command source address and command byte should be 0x00
-	EXPECT_EQ(0x00, server.currentCommandSourceAddress);
-	EXPECT_EQ(0x00, server.currentCommandByte);
+	server.set_b6_command_busy(false);
+	EXPECT_TRUE(server.send_status());
+	time_source.update_for_ms(5);
+
+	// Read frames until we find the status message (data[0] == 0xFE)
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+			break;
+	}
+
+	EXPECT_EQ(8, testFrame.dataLength);
+	EXPECT_EQ(0x00, testFrame.data[5]); // currentCommandSourceAddress (not busy)
+	EXPECT_EQ(0x00, testFrame.data[6]); // currentCommandByte (not busy)
 
 	// Test set_b6_command_busy() API with specific values
 	server.set_b6_command_busy(true, 0x88, 0x60);
-	EXPECT_EQ(0x88, server.currentCommandSourceAddress);
-	EXPECT_EQ(0x60, server.currentCommandByte);
+	EXPECT_TRUE(server.send_status());
+	time_source.update_for_ms(5);
+
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+			break;
+	}
+
+	EXPECT_EQ(8, testFrame.dataLength);
+	EXPECT_EQ(0x88, testFrame.data[5]); // currentCommandSourceAddress = client 0x88
+	EXPECT_EQ(0x60, testFrame.data[6]); // currentCommandByte = ObjectPoolTransfer
 
 	// Clear the busy state
 	server.set_b6_command_busy(false);
-	EXPECT_EQ(0x00, server.currentCommandSourceAddress);
-	EXPECT_EQ(0x00, server.currentCommandByte);
+	EXPECT_TRUE(server.send_status());
+	time_source.update_for_ms(5);
 
-	// Test with default parameters (should set to 0x00)
-	server.set_b6_command_busy(true);
-	EXPECT_EQ(0x00, server.currentCommandSourceAddress);
-	EXPECT_EQ(0x00, server.currentCommandByte);
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+			break;
+	}
 
-	server.set_b6_command_busy(false);
-	EXPECT_EQ(0x00, server.currentCommandSourceAddress);
-	EXPECT_EQ(0x00, server.currentCommandByte);
+	EXPECT_EQ(8, testFrame.dataLength);
+	EXPECT_EQ(0x00, testFrame.data[5]); // currentCommandSourceAddress (cleared)
+	EXPECT_EQ(0x00, testFrame.data[6]); // currentCommandByte (cleared)
+
+	// Test with different command byte (ObjectPoolActivateDeactivate)
+	server.set_b6_command_busy(true, 0x77, 0x80);
+	EXPECT_TRUE(server.send_status());
+	time_source.update_for_ms(5);
+
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+			break;
+	}
+
+	EXPECT_EQ(8, testFrame.dataLength);
+	EXPECT_EQ(0x77, testFrame.data[5]); // currentCommandSourceAddress = client 0x77
+	EXPECT_EQ(0x80, testFrame.data[6]); // currentCommandByte = ObjectPoolActivateDeactivate
 
 	// Clean up
 	CANHardwareInterface::stop();
@@ -1443,7 +1483,7 @@ TEST_F(TaskControllerServerTest, B6CommandBusyStateTracking)
 TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolTransfer)
 {
 	// This test verifies that the B.6 busy state is correctly set/cleared
-	// during ObjectPoolTransfer command processing
+	// during ObjectPoolTransfer command processing by observing actual CAN messages
 
 	VirtualCANPlugin testPlugin;
 	testPlugin.open();
@@ -1467,19 +1507,51 @@ TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolTransfer)
 	                         .with_tc_geo_with_position_based_control());
 	server.initialize();
 
-	// Initially not busy
-	EXPECT_EQ(0x00, server.currentCommandSourceAddress);
-	EXPECT_EQ(0x00, server.currentCommandByte);
+	CANMessageFrame testFrame;
 
-	// Manually set busy state to simulate ObjectPoolTransfer processing
-	server.set_b6_command_busy(true, 0x88, 0x60); // 0x60 = ObjectPoolTransfer command
-	EXPECT_EQ(0x88, server.currentCommandSourceAddress);
-	EXPECT_EQ(0x60, server.currentCommandByte);
+	// Initially not busy - verify status message shows 0x00 in bytes 5-6
+	EXPECT_TRUE(server.send_status());
+	time_source.update_for_ms(5);
+
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+			break;
+	}
+
+	EXPECT_EQ(8, testFrame.dataLength);
+	EXPECT_EQ(0x00, testFrame.data[5]); // currentCommandSourceAddress
+	EXPECT_EQ(0x00, testFrame.data[6]); // currentCommandByte
+
+	// Simulate ObjectPoolTransfer processing (command byte 0x60)
+	server.set_b6_command_busy(true, 0x88, 0x60);
+	EXPECT_TRUE(server.send_status());
+	time_source.update_for_ms(5);
+
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+			break;
+	}
+
+	EXPECT_EQ(8, testFrame.dataLength);
+	EXPECT_EQ(0x88, testFrame.data[5]); // Client address 0x88
+	EXPECT_EQ(0x60, testFrame.data[6]); // ObjectPoolTransfer command
 
 	// Clear the busy state after processing
 	server.set_b6_command_busy(false);
-	EXPECT_EQ(0x00, server.currentCommandSourceAddress);
-	EXPECT_EQ(0x00, server.currentCommandByte);
+	EXPECT_TRUE(server.send_status());
+	time_source.update_for_ms(5);
+
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+			break;
+	}
+
+	EXPECT_EQ(8, testFrame.dataLength);
+	EXPECT_EQ(0x00, testFrame.data[5]); // Cleared
+	EXPECT_EQ(0x00, testFrame.data[6]); // Cleared
 
 	// Clean up
 	CANHardwareInterface::stop();
@@ -1488,7 +1560,7 @@ TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolTransfer)
 TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolActivateDeactivate)
 {
 	// This test verifies that the B.6 busy state is correctly set/cleared
-	// during ObjectPoolActivateDeactivate command processing
+	// during ObjectPoolActivateDeactivate command processing by observing actual CAN messages
 
 	VirtualCANPlugin testPlugin;
 	testPlugin.open();
@@ -1512,19 +1584,51 @@ TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolActivateDeactivate
 	                         .with_tc_geo_with_position_based_control());
 	server.initialize();
 
-	// Initially not busy
-	EXPECT_EQ(0x00, server.currentCommandSourceAddress);
-	EXPECT_EQ(0x00, server.currentCommandByte);
+	CANMessageFrame testFrame;
 
-	// Manually set busy state to simulate ObjectPoolActivateDeactivate processing
-	server.set_b6_command_busy(true, 0x88, 0x80); // 0x80 = ObjectPoolActivateDeactivate command
-	EXPECT_EQ(0x88, server.currentCommandSourceAddress);
-	EXPECT_EQ(0x80, server.currentCommandByte);
+	// Initially not busy
+	EXPECT_TRUE(server.send_status());
+	time_source.update_for_ms(5);
+
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+			break;
+	}
+
+	EXPECT_EQ(8, testFrame.dataLength);
+	EXPECT_EQ(0x00, testFrame.data[5]); // currentCommandSourceAddress
+	EXPECT_EQ(0x00, testFrame.data[6]); // currentCommandByte
+
+	// Simulate ObjectPoolActivateDeactivate processing (command byte 0x80)
+	server.set_b6_command_busy(true, 0x88, 0x80);
+	EXPECT_TRUE(server.send_status());
+	time_source.update_for_ms(5);
+
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+			break;
+	}
+
+	EXPECT_EQ(8, testFrame.dataLength);
+	EXPECT_EQ(0x88, testFrame.data[5]); // Client address 0x88
+	EXPECT_EQ(0x80, testFrame.data[6]); // ObjectPoolActivateDeactivate command
 
 	// Clear the busy state after processing
 	server.set_b6_command_busy(false);
-	EXPECT_EQ(0x00, server.currentCommandSourceAddress);
-	EXPECT_EQ(0x00, server.currentCommandByte);
+	EXPECT_TRUE(server.send_status());
+	time_source.update_for_ms(5);
+
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+			break;
+	}
+
+	EXPECT_EQ(8, testFrame.dataLength);
+	EXPECT_EQ(0x00, testFrame.data[5]); // Cleared
+	EXPECT_EQ(0x00, testFrame.data[6]); // Cleared
 
 	// Clean up
 	CANHardwareInterface::stop();
