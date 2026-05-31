@@ -1633,3 +1633,94 @@ TEST_F(TaskControllerServerTest, CommandBusyState_ObjectPoolActivateDeactivate)
 	// Clean up
 	CANHardwareInterface::stop();
 }
+
+TEST_F(TaskControllerServerTest, StatusMessageMinimumInterval)
+{
+	// This test verifies that status messages are never sent more frequently than 200ms
+
+	VirtualCANPlugin testPlugin;
+	testPlugin.open();
+
+	// Stop any existing hardware interface first
+	CANHardwareInterface::stop();
+	CANHardwareInterface::set_number_of_can_channels(1);
+	CANHardwareInterface::assign_can_channel_frame_handler(0, std::make_shared<VirtualCANPlugin>());
+	CANHardwareInterface::start(false);
+
+	// Use a different address to avoid conflicts with other tests
+	auto internalECU = test_helpers::claim_internal_control_function(0x93, 0, time_source);
+
+	DerivedTcServer server(internalECU,
+	                       4,
+	                       255,
+	                       16,
+	                       TaskControllerOptions()
+	                         .with_documentation()
+	                         .with_implement_section_control()
+	                         .with_tc_geo_with_position_based_control());
+	server.initialize();
+
+	CANMessageFrame testFrame;
+
+	// Send initial status message
+	EXPECT_TRUE(server.send_status());
+	time_source.update_for_ms(5);
+
+	// Read the first status message
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+			break;
+	}
+
+	// Now trigger multiple rapid state changes
+	// Each should set statusUpdatePending but should NOT send immediately
+	for (int i = 0; i < 5; ++i)
+	{
+		server.set_command_busy(true, 0x88, 0x60);
+		server.set_command_busy(false);
+		server.set_task_totals_active(true);
+		server.set_task_totals_active(false);
+	}
+
+	// Advance time by 150ms (less than 200ms minimum)
+	time_source.update_for_ms(150);
+
+	// Call update multiple times - should NOT send status yet
+	server.update();
+	server.update();
+	server.update();
+
+	// Try to read a frame - should not find a new status message yet
+	bool foundEarlyFrame = false;
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+		{
+			foundEarlyFrame = true;
+			break;
+		}
+	}
+
+	EXPECT_FALSE(foundEarlyFrame) << "Status message sent before 200ms minimum interval!";
+
+	// Now advance to 200ms total (should trigger the pending update)
+	time_source.update_for_ms(50);
+	server.update();
+
+	// Now we should find a status message
+	bool foundStatusAt200ms = false;
+	while (testPlugin.read_frame(testFrame))
+	{
+		if (testFrame.data[0] == 0xFE)
+		{
+			foundStatusAt200ms = true;
+			break;
+		}
+	}
+
+	EXPECT_TRUE(foundStatusAt200ms) << "Status message should be sent after 200ms minimum interval";
+
+	// Clean up
+	CANHardwareInterface::stop();
+}
