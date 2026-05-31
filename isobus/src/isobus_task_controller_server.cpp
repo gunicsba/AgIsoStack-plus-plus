@@ -108,7 +108,7 @@ namespace isobus
 		{
 			currentStatusByte &= ~static_cast<std::uint8_t>(ServerStatusBit::TaskTotalsActive);
 			currentStatusByte |= (static_cast<std::uint8_t>(isTaskActive) & static_cast<std::uint8_t>(ServerStatusBit::TaskTotalsActive));
-			lastStatusMessageTimestamp_ms = 0; // Force a status message to be sent on the next update.
+			statusUpdatePending = true; // Request immediate status update
 		}
 	}
 
@@ -117,7 +117,7 @@ namespace isobus
 		return (0 != (currentStatusByte & static_cast<std::uint8_t>(ServerStatusBit::TaskTotalsActive)));
 	}
 
-	void TaskControllerServer::set_b6_command_busy(bool isBusy, std::uint8_t clientAddress, std::uint8_t commandByte)
+	void TaskControllerServer::set_command_busy(bool isBusy, std::uint8_t clientAddress, std::uint8_t commandByte)
 	{
 		if (isBusy)
 		{
@@ -129,7 +129,7 @@ namespace isobus
 			currentCommandSourceAddress = 0x00;
 			currentCommandByte = 0x00;
 		}
-		lastStatusMessageTimestamp_ms = 0; // Force a status message to be sent on the next update.
+		statusUpdatePending = true; // Request immediate status update
 	}
 
 	void TaskControllerServer::initialize()
@@ -174,8 +174,30 @@ namespace isobus
 	void TaskControllerServer::update()
 	{
 		process_rx_messages();
-		if ((true == SystemTiming::time_expired_ms(lastStatusMessageTimestamp_ms, STATUS_MESSAGE_RATE_MS)) &&
-		    (true == send_status_message()))
+
+		// Check if we should send a status message
+		bool shouldSendStatus = false;
+		std::uint32_t timeSinceLastStatus_ms = SystemTiming::get_timestamp_ms() - lastStatusMessageTimestamp_ms;
+
+		if (statusUpdatePending)
+		{
+			// Pending update: send after minimum 200ms interval
+			if (timeSinceLastStatus_ms >= MIN_STATUS_MESSAGE_INTERVAL_MS)
+			{
+				shouldSendStatus = true;
+				statusUpdatePending = false; // Clear the flag
+			}
+		}
+		else
+		{
+			// Normal periodic update: send every 2000ms
+			if (timeSinceLastStatus_ms >= STATUS_MESSAGE_RATE_MS)
+			{
+				shouldSendStatus = true;
+			}
+		}
+
+		if (shouldSendStatus && send_status_message())
 		{
 			lastStatusMessageTimestamp_ms = SystemTiming::get_timestamp_ms();
 		}
@@ -193,7 +215,7 @@ namespace isobus
 				                                   // Clear B.6 command busy state if the timed-out client was executing a command
 				                                   if (currentCommandSourceAddress == clientInfo->clientControlFunction->get_address())
 				                                   {
-					                                   set_b6_command_busy(false);
+					                                   set_command_busy(false);
 				                                   }
 
 				                                   return true;
@@ -398,8 +420,7 @@ namespace isobus
 										{
 											if (nullptr != get_active_client(rxMessage.get_source_control_function()))
 											{
-												// Set B.6 command busy state (ISO 11783-10 B.8.1)
-												set_b6_command_busy(true, rxMessage.get_source_control_function()->get_address(), rxData[0]);
+												set_command_busy(true, rxMessage.get_source_control_function()->get_address(), rxData[0]);
 
 												std::vector<std::uint8_t> objectPool = rxData;
 												objectPool.erase(objectPool.begin()); // Strip the command byte from the front of the object pool
@@ -419,9 +440,8 @@ namespace isobus
 													LOG_ERROR("[TC Server]: Failed to store DDOP segment for client %hhu. Reporting to the client as \"Any other error\"", rxMessage.get_source_control_function()->get_address());
 													send_object_pool_transfer_response(rxMessage.get_source_control_function(), 2, static_cast<std::uint32_t>(objectPool.size()));
 												}
-
-												// Clear B.6 command busy state after processing
-												set_b6_command_busy(false);
+												// Clear command busy state after processing
+												set_command_busy(false);
 											}
 											else
 											{
@@ -434,8 +454,7 @@ namespace isobus
 										{
 											if (nullptr != get_active_client(rxMessage.get_source_control_function()))
 											{
-												// Set B.6 command busy state (ISO 11783-10 B.8.1)
-												set_b6_command_busy(true, rxMessage.get_source_control_function()->get_address(), rxData[0]);
+												set_command_busy(true, rxMessage.get_source_control_function()->get_address(), rxData[0]);
 
 												constexpr std::uint8_t ACTIVATE = 0xFF;
 												constexpr std::uint8_t DEACTIVATE = 0x00;
@@ -481,9 +500,7 @@ namespace isobus
 												{
 													LOG_ERROR("[TC Server]: Client %hhu requests activation/deactivation of object pool with invalid value: 0x%02X", rxMessage.get_source_control_function()->get_address(), rxData[1]);
 												}
-
-												// Clear B.6 command busy state after processing
-												set_b6_command_busy(false);
+												set_command_busy(false);
 											}
 											else
 											{

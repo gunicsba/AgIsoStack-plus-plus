@@ -1386,7 +1386,7 @@ TEST_F(TaskControllerServerTest, DDOPHelper_NoFunctions)
 	EXPECT_EQ(4000, implement.booms.at(0).sections.at(0).zOffset_mm.get());
 }
 
-TEST_F(TaskControllerServerTest, B6CommandBusyStateTracking)
+TEST_F(TaskControllerServerTest, CommandBusyStateTracking)
 {
 	VirtualCANPlugin testPlugin;
 	testPlugin.open();
@@ -1416,7 +1416,7 @@ TEST_F(TaskControllerServerTest, B6CommandBusyStateTracking)
 	CANMessageFrame testFrame;
 
 	// Initially, command source address and command byte should be 0x00
-	server.set_b6_command_busy(false);
+	server.set_command_busy(false);
 	EXPECT_TRUE(server.send_status());
 	time_source.update_for_ms(5);
 
@@ -1431,8 +1431,8 @@ TEST_F(TaskControllerServerTest, B6CommandBusyStateTracking)
 	EXPECT_EQ(0x00, testFrame.data[5]); // currentCommandSourceAddress (not busy)
 	EXPECT_EQ(0x00, testFrame.data[6]); // currentCommandByte (not busy)
 
-	// Test set_b6_command_busy() API with specific values
-	server.set_b6_command_busy(true, 0x88, 0x60);
+	// Test set_command_busy() API with specific values
+	server.set_command_busy(true, 0x88, 0x60);
 	EXPECT_TRUE(server.send_status());
 	time_source.update_for_ms(5);
 
@@ -1447,7 +1447,7 @@ TEST_F(TaskControllerServerTest, B6CommandBusyStateTracking)
 	EXPECT_EQ(0x60, testFrame.data[6]); // currentCommandByte = ObjectPoolTransfer
 
 	// Clear the busy state
-	server.set_b6_command_busy(false);
+	server.set_command_busy(false);
 	EXPECT_TRUE(server.send_status());
 	time_source.update_for_ms(5);
 
@@ -1462,7 +1462,7 @@ TEST_F(TaskControllerServerTest, B6CommandBusyStateTracking)
 	EXPECT_EQ(0x00, testFrame.data[6]); // currentCommandByte (cleared)
 
 	// Test with different command byte (ObjectPoolActivateDeactivate)
-	server.set_b6_command_busy(true, 0x77, 0x80);
+	server.set_command_busy(true, 0x77, 0x80);
 	EXPECT_TRUE(server.send_status());
 	time_source.update_for_ms(5);
 
@@ -1480,7 +1480,7 @@ TEST_F(TaskControllerServerTest, B6CommandBusyStateTracking)
 	CANHardwareInterface::stop();
 }
 
-TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolTransfer)
+TEST_F(TaskControllerServerTest, CommandBusyState_ObjectPoolTransfer)
 {
 	// This test verifies that the B.6 busy state is correctly set/cleared
 	// during ObjectPoolTransfer command processing by observing actual CAN messages
@@ -1524,7 +1524,7 @@ TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolTransfer)
 	EXPECT_EQ(0x00, testFrame.data[6]); // currentCommandByte
 
 	// Simulate ObjectPoolTransfer processing (command byte 0x60)
-	server.set_b6_command_busy(true, 0x88, 0x60);
+	server.set_command_busy(true, 0x88, 0x60);
 	EXPECT_TRUE(server.send_status());
 	time_source.update_for_ms(5);
 
@@ -1539,7 +1539,7 @@ TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolTransfer)
 	EXPECT_EQ(0x60, testFrame.data[6]); // ObjectPoolTransfer command
 
 	// Clear the busy state after processing
-	server.set_b6_command_busy(false);
+	server.set_command_busy(false);
 	EXPECT_TRUE(server.send_status());
 	time_source.update_for_ms(5);
 
@@ -1557,7 +1557,7 @@ TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolTransfer)
 	CANHardwareInterface::stop();
 }
 
-TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolActivateDeactivate)
+TEST_F(TaskControllerServerTest, CommandBusyState_ObjectPoolActivateDeactivate)
 {
 	// This test verifies that the B.6 busy state is correctly set/cleared
 	// during ObjectPoolActivateDeactivate command processing by observing actual CAN messages
@@ -1601,7 +1601,7 @@ TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolActivateDeactivate
 	EXPECT_EQ(0x00, testFrame.data[6]); // currentCommandByte
 
 	// Simulate ObjectPoolActivateDeactivate processing (command byte 0x80)
-	server.set_b6_command_busy(true, 0x88, 0x80);
+	server.set_command_busy(true, 0x88, 0x80);
 	EXPECT_TRUE(server.send_status());
 	time_source.update_for_ms(5);
 
@@ -1616,7 +1616,7 @@ TEST_F(TaskControllerServerTest, B6CommandBusyState_ObjectPoolActivateDeactivate
 	EXPECT_EQ(0x80, testFrame.data[6]); // ObjectPoolActivateDeactivate command
 
 	// Clear the busy state after processing
-	server.set_b6_command_busy(false);
+	server.set_command_busy(false);
 	EXPECT_TRUE(server.send_status());
 	time_source.update_for_ms(5);
 

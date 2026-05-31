@@ -344,15 +344,15 @@ namespace isobus
 		/// @returns Whether a task is currently active or not.
 		bool get_task_totals_active() const;
 
-		/// @brief Sets the B.6 command busy state in the TC Status message.
-		/// This should be called when the server is busy executing a B.6 device descriptor command
+		/// @brief Sets the command busy state in the TC Status message.
+		/// This should be called when the server is busy executing a device descriptor command
 		/// (ObjectPoolTransfer or ObjectPoolActivateDeactivate) to inform clients that the server
-		/// cannot accept new B.6 commands. The busy state is indicated in Bytes 5-7 of the
+		/// cannot accept new commands. The busy state is indicated in Bytes 5-7 of the
 		/// TC Status message (currentCommandSourceAddress, currentCommandByte).
-		/// @param[in] isBusy Whether the server is busy executing a B.6 command.
+		/// @param[in] isBusy Whether the server is busy executing a command.
 		/// @param[in] clientAddress The CAN address of the client that sent the command (0x00 if not busy).
-		/// @param[in] commandByte The B.6 command byte being executed (0x00 if not busy).
-		void set_b6_command_busy(bool isBusy, std::uint8_t clientAddress = 0, std::uint8_t commandByte = 0);
+		/// @param[in] commandByte The command byte being executed (0x00 if not busy).
+		void set_command_busy(bool isBusy, std::uint8_t clientAddress = 0, std::uint8_t commandByte = 0);
 
 		/// @brief Returns the language command interface used to communicate with the client which language/units are in use.
 		/// The language command is very important for the TC to function correctly, so it is recommended that you call this
@@ -572,6 +572,7 @@ namespace isobus
 		                                 CANIdentifier::CANPriority priority = CANIdentifier::CANPriority::Priority5) const;
 
 		static constexpr std::uint32_t STATUS_MESSAGE_RATE_MS = 2000; ///< The rate at which status messages are sent to the clients in milliseconds.
+		static constexpr std::uint32_t MIN_STATUS_MESSAGE_INTERVAL_MS = 200; ///< Minimum interval between status messages in milliseconds.
 
 		LanguageCommandInterface languageCommandInterface; ///< The language command interface used to communicate with the client which language/units are in use.
 		std::shared_ptr<InternalControlFunction> serverControlFunction; ///< The control function used to communicate with the clients.
@@ -582,6 +583,7 @@ namespace isobus
 		std::mutex messagesMutex; ///< A mutex used to protect the rxMessageQueue.
 #endif
 		std::uint32_t lastStatusMessageTimestamp_ms = 0; ///< The timestamp of the last status message sent on the bus
+		bool statusUpdatePending = false; ///< Flag to indicate a status update should be sent after minimum interval.
 		const TaskControllerVersion reportedVersion; ///< The version of the TC that will be reported to the clients.
 		const std::uint8_t numberBoomsSupportedToReport; ///< The number of booms that will be reported as supported by the TC.
 		const std::uint8_t numberSectionsSupportedToReport; ///< The number of sections that will be reported as supported by the TC.
