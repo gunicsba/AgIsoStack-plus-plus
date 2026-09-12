@@ -22,9 +22,22 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BUILD_DIR="$REPO_ROOT/build"
 BASE_REF="origin/main"
 CHECK_ALL=0
+# Prints the first of the given commands that is available
+find_command() {
+  local candidate
+  for candidate in "$@"; do
+    if command -v "$candidate" > /dev/null 2>&1; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 0
+}
+
+# The pip package installs clang-tidy-diff.py and run-clang-tidy.py, except on Windows where the .py suffix is dropped
 CLANG_TIDY=${CLANG_TIDY:-clang-tidy}
-CLANG_TIDY_DIFF=${CLANG_TIDY_DIFF:-clang-tidy-diff}
-RUN_CLANG_TIDY=${RUN_CLANG_TIDY:-run-clang-tidy}
+CLANG_TIDY_DIFF=${CLANG_TIDY_DIFF:-$(find_command clang-tidy-diff.py clang-tidy-diff)}
+RUN_CLANG_TIDY=${RUN_CLANG_TIDY:-$(find_command run-clang-tidy.py run-clang-tidy)}
 JOBS=$(nproc 2>/dev/null || echo 4)
 SOURCE_PATHSPEC=('*.cpp' '*.hpp' ':!hardware_integration/lib/**')
 
@@ -100,6 +113,15 @@ fi
 COMMON_ARGS=(-config-file="$(native_path "$CONFIG_FILE")" -clang-tidy-binary "$(native_path "$CLANG_TIDY_WRAPPER")" -j "$JOBS" -quiet -warnings-as-errors='*')
 
 cd "$REPO_ROOT"
+
+if [ "$CHECK_ALL" -eq 1 ] && [ -z "$RUN_CLANG_TIDY" ]; then
+  echo "run-clang-tidy was not found, install it with clang-tidy or set the RUN_CLANG_TIDY environment variable."
+  exit 2
+fi
+if [ "$CHECK_ALL" -eq 0 ] && [ -z "$CLANG_TIDY_DIFF" ]; then
+  echo "clang-tidy-diff was not found, install it with clang-tidy or set the CLANG_TIDY_DIFF environment variable."
+  exit 2
+fi
 
 if [ "$CHECK_ALL" -eq 1 ]; then
   # Only check the project sources, not dependencies like googletest that are part of the compilation database
