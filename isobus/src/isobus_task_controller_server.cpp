@@ -763,7 +763,7 @@ namespace isobus
 
 						if (0 == numberOfWorkingSetMembers)
 						{
-							LOG_ERROR("[TC Server]: Working set master reported zero members – invalid!");
+							LOG_ERROR("[TC Server]: Working set master reported zero members - invalid!");
 							break;
 						}
 
