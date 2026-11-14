@@ -54,11 +54,11 @@ TEST_F(DiagnosticProtocolTest, IdentificationFieldValidation)
 	EXPECT_TRUE(protocolUnderTest.set_software_id_field(0, "App v1.0"));
 	EXPECT_FALSE(protocolUnderTest.set_software_id_field(0, "App*v1.0"));
 	EXPECT_FALSE(protocolUnderTest.set_software_id_field(1, "*"));
-	// The number of fields is sent in one byte
-	EXPECT_TRUE(protocolUnderTest.set_software_id_field(254, "Last field"));
-	EXPECT_FALSE(protocolUnderTest.set_software_id_field(255, "Too far"));
+	// ISO 11783-12:2019 A.3: at most 250 fields
+	EXPECT_TRUE(protocolUnderTest.set_software_id_field(249, "Last field"));
+	EXPECT_FALSE(protocolUnderTest.set_software_id_field(250, "Too far"));
 	EXPECT_FALSE(protocolUnderTest.set_software_id_field(0xFFFFFFFF, "Too far"));
-	EXPECT_TRUE(protocolUnderTest.set_software_id_field(254, ""));
+	EXPECT_TRUE(protocolUnderTest.set_software_id_field(249, ""));
 
 	EXPECT_TRUE(protocolUnderTest.set_product_identification_code("Code"));
 	EXPECT_FALSE(protocolUnderTest.set_product_identification_code("Co*de"));

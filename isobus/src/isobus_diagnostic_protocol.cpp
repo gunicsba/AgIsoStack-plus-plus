@@ -353,8 +353,8 @@ namespace isobus
 
 	bool DiagnosticProtocol::set_software_id_field(std::uint32_t index, const std::string &value)
 	{
-		// The message sends the number of fields in one byte
-		constexpr std::uint32_t MAX_SOFTWARE_ID_FIELDS = 0xFF;
+		// ISO 11783-12:2019 A.3: the number of fields has a data range of 0 to 250
+		constexpr std::uint32_t MAX_SOFTWARE_ID_FIELDS = 250;
 		bool retVal = false;
 
 		if ((index < MAX_SOFTWARE_ID_FIELDS) && is_valid_identification_field(value))
