@@ -2763,9 +2763,15 @@ TEST_F(VirtualTerminalServerMessagingTest, PointingEventMessageMatchesTheVTVersi
 
 	CANMessageFrame frame = {};
 
-	// VT version 3 only reports the position
+	// VT version 3 only reports presses, so a release or a held touch sends nothing (ISO 11783-6:2018 H.6)
 	serverUnderTest.version = VirtualTerminalBase::VTVersion::Version3;
-	ASSERT_TRUE(serverUnderTest.send_pointing_event_message(VirtualTerminalBase::KeyActivationCode::ButtonUnlatchedOrReleased, 0x0123, 0x0045, 0x1234, client));
+	EXPECT_FALSE(serverUnderTest.send_pointing_event_message(VirtualTerminalBase::KeyActivationCode::ButtonUnlatchedOrReleased, 0x0123, 0x0045, 0x1234, client));
+	EXPECT_FALSE(serverUnderTest.send_pointing_event_message(VirtualTerminalBase::KeyActivationCode::ButtonStillHeld, 0x0123, 0x0045, 0x1234, client));
+	time_source.update_for_ms(5);
+	EXPECT_FALSE(testPlugin.read_frame(frame));
+
+	// A press only reports the position
+	ASSERT_TRUE(serverUnderTest.send_pointing_event_message(VirtualTerminalBase::KeyActivationCode::ButtonPressedOrLatched, 0x0123, 0x0045, 0x1234, client));
 	time_source.update_for_ms(5);
 	ASSERT_TRUE(testPlugin.read_frame(frame));
 	EXPECT_EQ(0xE6, get_pdu_format(frame)); // VT to ECU
