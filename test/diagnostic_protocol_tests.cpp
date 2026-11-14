@@ -660,7 +660,7 @@ TEST_F(DiagnosticProtocolTest, MessageEncoding)
 
 		EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
 		EXPECT_EQ(0x18FD32AA, testFrame.identifier); // BAM from address AA
-		EXPECT_EQ(0x01, testFrame.data[0]); // J1939-73
+		EXPECT_EQ(0x00, testFrame.data[0]); // No protocols in addition to ISO 11783 (ISO 11783-12 A.6)
 		EXPECT_EQ(0xFF, testFrame.data[1]); // Reserved
 		EXPECT_EQ(0xFF, testFrame.data[2]); // Reserved
 		EXPECT_EQ(0xFF, testFrame.data[3]); // Reserved
@@ -1545,5 +1545,114 @@ TEST_F(DiagnosticProtocolTest, MessageEncoding)
 	EXPECT_FALSE(protocolUnderTest.get_initialized());
 	CANHardwareInterface::stop();
 
+	CANNetworkManager::CANNetwork.deactivate_control_function(TestInternalECU);
+}
+
+/// @brief Requests a PGN from the protocol and returns the frame it sends with that PGN
+static bool request_and_read_frame(DiagnosticProtocol &protocol,
+                                   VirtualCANPlugin &plugin,
+                                   std::shared_ptr<InternalControlFunction> responder,
+                                   std::shared_ptr<PartneredControlFunction> requester,
+                                   std::uint32_t parameterGroupNumber,
+                                   CANMessageFrame &frame,
+                                   test_helpers::TestTimeSource &timeSource)
+{
+	CANMessageFrame request = {};
+	request.dataLength = 3;
+	request.identifier = test_helpers::create_ext_can_id(6, 0xEA00, responder, requester);
+	request.data[0] = static_cast<std::uint8_t>(parameterGroupNumber & 0xFF);
+	request.data[1] = static_cast<std::uint8_t>((parameterGroupNumber >> 8) & 0xFF);
+	request.data[2] = static_cast<std::uint8_t>((parameterGroupNumber >> 16) & 0xFF);
+	CANNetworkManager::CANNetwork.process_receive_can_message_frame(request);
+	CANNetworkManager::CANNetwork.update();
+	protocol.update();
+	timeSource.update_for_ms(5);
+
+	while (plugin.read_frame(frame))
+	{
+		if (CANIdentifier(frame.identifier).get_parameter_group_number() == parameterGroupNumber)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+TEST_F(DiagnosticProtocolTest, ComplianceCertificationAndDiagnosticProtocolIdentification)
+{
+	VirtualCANPlugin testPlugin;
+	testPlugin.open();
+
+	CANHardwareInterface::set_number_of_can_channels(1);
+	CANHardwareInterface::assign_can_channel_frame_handler(0, std::make_shared<VirtualCANPlugin>());
+	CANHardwareInterface::start(false);
+
+	auto TestInternalECU = test_helpers::claim_internal_control_function(0xE0, 0, time_source);
+	auto TestPartneredECU = test_helpers::force_claim_partnered_control_function(0xE1, 0);
+	DiagnosticProtocol protocolUnderTest(TestInternalECU);
+	protocolUnderTest.initialize();
+
+	CANMessageFrame testFrame = {};
+	while (!testPlugin.get_queue_empty())
+	{
+		testPlugin.read_frame(testFrame);
+	}
+
+	// ISO 11783-7:2009 B.27. Until the application sets it, every field is "not available" and no type is certified
+	ASSERT_TRUE(request_and_read_frame(protocolUnderTest, testPlugin, TestInternalECU, TestPartneredECU, 0xFD42, testFrame, time_source));
+	EXPECT_EQ(CAN_DATA_LENGTH, testFrame.dataLength);
+	EXPECT_EQ(0xFF, testFrame.data[0]); // Year 63 and revision 7: not available
+	EXPECT_EQ(0xFF, testFrame.data[1]); // Laboratory ID 0x7FF and type 7: not available
+	EXPECT_EQ(0xFF, testFrame.data[2]);
+	EXPECT_EQ(0x00, testFrame.data[3]); // No certification types
+	EXPECT_EQ(0x00, testFrame.data[4]);
+	EXPECT_EQ(0x00, testFrame.data[5]);
+	EXPECT_EQ(0xFF, testFrame.data[6]); // Reference number: not available
+	EXPECT_EQ(0xFF, testFrame.data[7]);
+
+	// 2020 protocol, second revision (suffix A), EU laboratory 0x123, reference number 0x1234
+	EXPECT_TRUE(protocolUnderTest.set_compliance_certification(2020, 1, DiagnosticProtocol::CertificationLaboratoryType::EUCertifiedLaboratory, 0x123, 0x1234));
+	protocolUnderTest.set_compliance_certification_type(DiagnosticProtocol::CertificationType::MinimumECU, true);
+	protocolUnderTest.set_compliance_certification_type(DiagnosticProtocol::CertificationType::VirtualTerminal, true);
+	protocolUnderTest.set_compliance_certification_type(DiagnosticProtocol::CertificationType::TaskController, true);
+	protocolUnderTest.set_compliance_certification_type(DiagnosticProtocol::CertificationType::GPSReceiver, true);
+	protocolUnderTest.set_compliance_certification_type(DiagnosticProtocol::CertificationType::FileServer, true);
+	protocolUnderTest.set_compliance_certification_type(DiagnosticProtocol::CertificationType::FileServer, false);
+	ASSERT_TRUE(request_and_read_frame(protocolUnderTest, testPlugin, TestInternalECU, TestPartneredECU, 0xFD42, testFrame, time_source));
+	EXPECT_EQ(0x54, testFrame.data[0]); // Revision LSBits 01, year 20
+	EXPECT_EQ(0x72, testFrame.data[1]); // Laboratory ID LSBits 011, reserved bit 1, type 001, revision MSBit 0
+	EXPECT_EQ(0x24, testFrame.data[2]); // Laboratory ID MSBits
+	EXPECT_EQ(0x84, testFrame.data[3]); // Minimum ECU (bit 8) and virtual terminal (bit 3)
+	EXPECT_EQ(0x88, testFrame.data[4]); // Task controller (bit 8) and GPS receiver (bit 4), but not the file server
+	EXPECT_EQ(0x00, testFrame.data[5]);
+	EXPECT_EQ(0x34, testFrame.data[6]);
+	EXPECT_EQ(0x12, testFrame.data[7]);
+
+	// Out of range values are rejected and leave the data unchanged
+	EXPECT_FALSE(protocolUnderTest.set_compliance_certification(1999, 0, DiagnosticProtocol::CertificationLaboratoryType::EUCertifiedLaboratory, 0x123, 0x1234));
+	EXPECT_FALSE(protocolUnderTest.set_compliance_certification(2062, 0, DiagnosticProtocol::CertificationLaboratoryType::EUCertifiedLaboratory, 0x123, 0x1234));
+	EXPECT_FALSE(protocolUnderTest.set_compliance_certification(2020, 4, DiagnosticProtocol::CertificationLaboratoryType::EUCertifiedLaboratory, 0x123, 0x1234));
+	EXPECT_FALSE(protocolUnderTest.set_compliance_certification(2020, 1, DiagnosticProtocol::CertificationLaboratoryType::EUCertifiedLaboratory, 0x800, 0x1234));
+	EXPECT_FALSE(protocolUnderTest.set_compliance_certification(2020, 1, DiagnosticProtocol::CertificationLaboratoryType::EUCertifiedLaboratory, 0x123, 64256));
+	ASSERT_TRUE(request_and_read_frame(protocolUnderTest, testPlugin, TestInternalECU, TestPartneredECU, 0xFD42, testFrame, time_source));
+	EXPECT_EQ(0x54, testFrame.data[0]);
+	EXPECT_EQ(0x72, testFrame.data[1]);
+
+	// ISO 11783-12:2019 A.6: only the protocols in addition to ISO 11783
+	EXPECT_EQ(0x00, protocolUnderTest.get_diagnostic_protocol_identification());
+	ASSERT_TRUE(request_and_read_frame(protocolUnderTest, testPlugin, TestInternalECU, TestPartneredECU, 0xFD32, testFrame, time_source));
+	EXPECT_EQ(0x00, testFrame.data[0]);
+	protocolUnderTest.set_additional_diagnostic_protocols(static_cast<std::uint8_t>(DiagnosticProtocol::DiagnosticProtocolIdentificationBit::ISO14229_3));
+	ASSERT_TRUE(request_and_read_frame(protocolUnderTest, testPlugin, TestInternalECU, TestPartneredECU, 0xFD32, testFrame, time_source));
+	EXPECT_EQ(0x04, testFrame.data[0]);
+	// J1939 mode always reports J1939-73
+	protocolUnderTest.set_j1939_mode(true);
+	EXPECT_EQ(0x05, protocolUnderTest.get_diagnostic_protocol_identification());
+	protocolUnderTest.set_j1939_mode(false);
+
+	protocolUnderTest.terminate();
+	CANHardwareInterface::stop();
+
+	CANNetworkManager::CANNetwork.deactivate_control_function(TestPartneredECU);
 	CANNetworkManager::CANNetwork.deactivate_control_function(TestInternalECU);
 }

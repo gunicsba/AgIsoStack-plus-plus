@@ -114,6 +114,7 @@ namespace isobus
 				requestProtocol->register_pgn_request_callback(static_cast<std::uint32_t>(CANLibParameterGroupNumber::DiagnosticProtocolIdentification), process_parameter_group_number_request, this);
 				requestProtocol->register_pgn_request_callback(static_cast<std::uint32_t>(CANLibParameterGroupNumber::SoftwareIdentification), process_parameter_group_number_request, this);
 				requestProtocol->register_pgn_request_callback(static_cast<std::uint32_t>(CANLibParameterGroupNumber::ECUIdentificationInformation), process_parameter_group_number_request, this);
+				requestProtocol->register_pgn_request_callback(static_cast<std::uint32_t>(CANLibParameterGroupNumber::ISOBUSComplianceCertification), process_parameter_group_number_request, this);
 			}
 			retVal = true;
 		}
@@ -145,6 +146,7 @@ namespace isobus
 				requestProtocol->remove_pgn_request_callback(static_cast<std::uint32_t>(CANLibParameterGroupNumber::DiagnosticProtocolIdentification), process_parameter_group_number_request, this);
 				requestProtocol->remove_pgn_request_callback(static_cast<std::uint32_t>(CANLibParameterGroupNumber::SoftwareIdentification), process_parameter_group_number_request, this);
 				requestProtocol->remove_pgn_request_callback(static_cast<std::uint32_t>(CANLibParameterGroupNumber::ECUIdentificationInformation), process_parameter_group_number_request, this);
+				requestProtocol->remove_pgn_request_callback(static_cast<std::uint32_t>(CANLibParameterGroupNumber::ISOBUSComplianceCertification), process_parameter_group_number_request, this);
 			}
 			CANNetworkManager::CANNetwork.remove_protocol_parameter_group_number_callback(static_cast<std::uint32_t>(CANLibParameterGroupNumber::DiagnosticMessage22), process_message, this);
 			CANNetworkManager::CANNetwork.remove_protocol_parameter_group_number_callback(static_cast<std::uint32_t>(CANLibParameterGroupNumber::DiagnosticMessage13), process_message, this);
@@ -345,6 +347,70 @@ namespace isobus
 			retVal = true;
 		}
 		return retVal;
+	}
+
+	void DiagnosticProtocol::set_additional_diagnostic_protocols(std::uint8_t protocols)
+	{
+		additionalDiagnosticProtocols = protocols;
+	}
+
+	std::uint8_t DiagnosticProtocol::get_diagnostic_protocol_identification() const
+	{
+		// ISO 11783-12:2019 A.6 lists the protocols supported in addition to ISO 11783
+		std::uint8_t retVal = additionalDiagnosticProtocols;
+
+		if (get_j1939_mode())
+		{
+			retVal |= static_cast<std::uint8_t>(DiagnosticProtocolIdentificationBit::J1939_73);
+		}
+		return retVal;
+	}
+
+	bool DiagnosticProtocol::set_compliance_certification(std::uint16_t year,
+	                                                      std::uint8_t revision,
+	                                                      CertificationLaboratoryType laboratoryType,
+	                                                      std::uint16_t laboratoryID,
+	                                                      std::uint16_t referenceNumber)
+	{
+		// ISO 11783-7:2009 A.29: the year has a 2000 offset in 6 bits, the revision 3 bits, the laboratory ID 11 bits
+		constexpr std::uint16_t CERTIFICATION_YEAR_OFFSET = 2000;
+		constexpr std::uint16_t MAX_CERTIFICATION_YEAR = 2061;
+		constexpr std::uint8_t MAX_CERTIFICATION_REVISION = 3;
+		constexpr std::uint16_t MAX_LABORATORY_ID = 0x7FF;
+		constexpr std::uint16_t MAX_REFERENCE_NUMBER = 64255;
+		bool retVal = false;
+
+		if ((year >= CERTIFICATION_YEAR_OFFSET) &&
+		    (year <= MAX_CERTIFICATION_YEAR) &&
+		    (revision <= MAX_CERTIFICATION_REVISION) &&
+		    (laboratoryID <= MAX_LABORATORY_ID) &&
+		    (referenceNumber <= MAX_REFERENCE_NUMBER))
+		{
+			certificationYear = static_cast<std::uint8_t>(year - CERTIFICATION_YEAR_OFFSET);
+			certificationRevision = revision;
+			certificationLaboratoryType = laboratoryType;
+			certificationLaboratoryID = laboratoryID;
+			certificationReferenceNumber = referenceNumber;
+			retVal = true;
+		}
+		return retVal;
+	}
+
+	void DiagnosticProtocol::set_compliance_certification_type(CertificationType type, bool isCertified)
+	{
+		if (type < CertificationType::NumberOfTypes)
+		{
+			const auto bit = static_cast<std::uint16_t>(1U << static_cast<std::uint8_t>(type));
+
+			if (isCertified)
+			{
+				certificationTypes |= bit;
+			}
+			else
+			{
+				certificationTypes &= static_cast<std::uint16_t>(~bit);
+			}
+		}
 	}
 
 	void DiagnosticProtocol::set_software_id_field(std::uint32_t index, const std::string &value)
@@ -810,14 +876,50 @@ namespace isobus
 
 		if (nullptr != myControlFunction)
 		{
-			/// Bit 1 = J1939-73, Bit 2 = ISO 14230, Bit 3 = ISO 15765-3, else Reserved
-			constexpr std::uint8_t SUPPORTED_DIAGNOSTIC_PROTOCOLS_BITFIELD = 0x01;
 			std::array<std::uint8_t, CAN_DATA_LENGTH> buffer;
 
 			buffer.fill(0xFF); // Reserved bytes
-			buffer[0] = SUPPORTED_DIAGNOSTIC_PROTOCOLS_BITFIELD;
+			buffer[0] = get_diagnostic_protocol_identification();
 
 			retVal = CANNetworkManager::CANNetwork.send_can_message(static_cast<std::uint32_t>(CANLibParameterGroupNumber::DiagnosticProtocolIdentification),
+			                                                        buffer.data(),
+			                                                        CAN_DATA_LENGTH,
+			                                                        myControlFunction);
+		}
+		return retVal;
+	}
+
+	bool DiagnosticProtocol::send_compliance_certification() const
+	{
+		bool retVal = false;
+
+		if (nullptr != myControlFunction)
+		{
+			// Layout from ISO 11783-7:2009, B.27
+			const auto laboratoryType = static_cast<std::uint8_t>(certificationLaboratoryType) & 0x07;
+			std::uint8_t certificationTypeBytes[2] = { 0, 0 }; // Bytes 4 and 5. Reserved certifications are set to 0
+
+			for (std::uint8_t i = 0; i < static_cast<std::uint8_t>(CertificationType::NumberOfTypes); i++)
+			{
+				if (0 != (certificationTypes & (1U << i)))
+				{
+					// The first type is bit 8 of byte 4, the next one bit 7, and so on
+					certificationTypeBytes[i / 8] |= static_cast<std::uint8_t>(0x80 >> (i % 8));
+				}
+			}
+
+			const std::array<std::uint8_t, CAN_DATA_LENGTH> buffer = {
+				static_cast<std::uint8_t>(((certificationRevision & 0x03) << 6) | (certificationYear & 0x3F)),
+				static_cast<std::uint8_t>(((certificationLaboratoryID & 0x07) << 5) | 0x10 | (laboratoryType << 1) | ((certificationRevision >> 2) & 0x01)), // Bit 5 is reserved
+				static_cast<std::uint8_t>((certificationLaboratoryID >> 3) & 0xFF),
+				certificationTypeBytes[0],
+				certificationTypeBytes[1],
+				0x00, // Reserved for additional certifications, set to 0
+				static_cast<std::uint8_t>(certificationReferenceNumber & 0xFF),
+				static_cast<std::uint8_t>((certificationReferenceNumber >> 8) & 0xFF)
+			};
+
+			retVal = CANNetworkManager::CANNetwork.send_can_message(static_cast<std::uint32_t>(CANLibParameterGroupNumber::ISOBUSComplianceCertification),
 			                                                        buffer.data(),
 			                                                        CAN_DATA_LENGTH,
 			                                                        myControlFunction);
@@ -1300,6 +1402,13 @@ namespace isobus
 				}
 				break;
 
+				case static_cast<std::uint32_t>(CANLibParameterGroupNumber::ISOBUSComplianceCertification):
+				{
+					txFlags.set_flag(static_cast<std::uint32_t>(TransmitFlags::ComplianceCertification));
+					retVal = true;
+				}
+				break;
+
 				case static_cast<std::uint32_t>(CANLibParameterGroupNumber::SoftwareIdentification):
 				{
 					pendingRequests.insert(make_pair(parameterGroupNumber, requestingControlFunction));
@@ -1394,6 +1503,12 @@ namespace isobus
 				case static_cast<std::uint32_t>(TransmitFlags::SoftwareIdentification):
 				{
 					transmitSuccessful = parent->send_software_identification();
+				}
+				break;
+
+				case static_cast<std::uint32_t>(TransmitFlags::ComplianceCertification):
+				{
+					transmitSuccessful = parent->send_compliance_certification();
 				}
 				break;
 
