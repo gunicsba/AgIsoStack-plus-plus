@@ -677,7 +677,21 @@ namespace isobus
 
 	void CANNetworkManager::update_internal_cfs()
 	{
-		LOCK_GUARD(RecursiveMutex, controlFunctionsMutex);
+		std::vector<std::pair<std::shared_ptr<InternalControlFunction>, std::uint8_t>> newAddressClaims;
+		{
+			LOCK_GUARD(RecursiveMutex, controlFunctionsMutex);
+			update_internal_cfs_address_claiming(newAddressClaims);
+		}
+
+		// Called without the lock, so a listener can send messages or use the network manager
+		for (const auto &claim : newAddressClaims)
+		{
+			claim.first->addressClaimedDispatcher.call(claim.second);
+		}
+	}
+
+	void CANNetworkManager::update_internal_cfs_address_claiming(std::vector<std::pair<std::shared_ptr<InternalControlFunction>, std::uint8_t>> &newAddressClaims)
+	{
 		for (const auto &currentInternalControlFunction : internalControlFunctions)
 		{
 			if (currentInternalControlFunction->update_address_claiming())
@@ -704,6 +718,13 @@ namespace isobus
 
 				// ECU has claimed since the last update, add it to the table
 				targetControlFunction = currentInternalControlFunction;
+			}
+
+			// Only a new claim is reported, not the repeated claim that answers a request for address claim
+			if (currentInternalControlFunction->claimedNewAddress)
+			{
+				currentInternalControlFunction->claimedNewAddress = false;
+				newAddressClaims.emplace_back(currentInternalControlFunction, currentInternalControlFunction->get_address());
 			}
 		}
 	}

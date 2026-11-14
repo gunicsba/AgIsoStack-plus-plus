@@ -205,6 +205,7 @@ namespace isobus
 					          get_preferred_address(),
 					          get_can_port());
 					hasClaimedAddress = true;
+					claimedNewAddress = true;
 					set_current_state(State::AddressClaimingComplete);
 				}
 				else
@@ -239,6 +240,7 @@ namespace isobus
 							          i,
 							          get_can_port());
 						}
+						claimedNewAddress = true;
 						set_current_state(State::AddressClaimingComplete);
 						break;
 					}

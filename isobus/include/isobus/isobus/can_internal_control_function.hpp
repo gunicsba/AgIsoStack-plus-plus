@@ -131,6 +131,7 @@ namespace isobus
 		std::uint8_t preferredAddress; ///< The address we'd prefer to claim as (we may not get it)
 		std::uint8_t randomClaimDelay_ms; ///< The random delay before claiming an address as required by the ISO11783 standard
 		EventDispatcher<std::uint8_t> addressClaimedDispatcher; ///< The event dispatcher for when an address is claimed
+		bool claimedNewAddress = false; ///< Set when a new address is claimed, so the network manager calls addressClaimedDispatcher outside its lock
 	};
 
 } // namespace isobus

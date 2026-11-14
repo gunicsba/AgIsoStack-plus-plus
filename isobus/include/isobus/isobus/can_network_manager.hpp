@@ -297,7 +297,12 @@ namespace isobus
 		void update_address_table(const CANMessage &message);
 
 		/// @brief Updates the internal address table based on updates to internal cfs addresses
+		/// @details Then calls the address claimed event of each internal control function that claimed a new address, without the lock
 		void update_internal_cfs();
+
+		/// @brief Runs the address claiming of the internal cfs and updates the address table. Call with controlFunctionsMutex held.
+		/// @param[out] newAddressClaims The internal cfs that claimed a new address, with that address
+		void update_internal_cfs_address_claiming(std::vector<std::pair<std::shared_ptr<InternalControlFunction>, std::uint8_t>> &newAddressClaims);
 
 		/// @brief Processes a message for each internal control function for address claiming
 		/// @param[in] message The message to process
